@@ -6,7 +6,7 @@ import { uploadOpenAIFileToDrive, validateDriveUploadFileName } from './drive-la
 
 function fileFetch(bytes: Uint8Array) {
   return vi.fn(async (_url: string, init?: RequestInit) => {
-    if (!init?.method || init.method === 'GET') return new Response(bytes);
+    if (!init?.method || init.method === 'GET') return new Response(Buffer.from(bytes));
     throw new Error('unexpected source request');
   });
 }
