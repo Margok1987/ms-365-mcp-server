@@ -71,6 +71,9 @@ interface GraphRequestOptions {
   // Pin this response to JSON regardless of the configured format, so the
   // fetchAllPages merge can JSON.parse each page before re-encoding (#560).
   forceJsonOutput?: boolean;
+  // Keep all @odata.* fields intact for callers such as graph-batch whose subresponses
+  // may rely on metadata beyond nextLink/deltaLink.
+  preserveODataMetadata?: boolean;
   // Treat the body as bytes whatever Content-Type Graph reports, so callers whose
   // contract is "return the bytes" (download-bytes) never go through the lossy
   // response.text() path. Without this, only types on the isBinaryContentType
@@ -571,7 +574,13 @@ class GraphClient {
       const outputFormat = options.forceJsonOutput ? 'json' : this.outputFormat;
 
       return this.withResponseMetadata(
-        this.formatJsonResponse(data, options.rawResponse, options.excludeResponse, outputFormat),
+        this.formatJsonResponse(
+          data,
+          options.rawResponse,
+          options.excludeResponse,
+          outputFormat,
+          options.preserveODataMetadata
+        ),
         metadata
       );
     } catch (error) {
@@ -611,7 +620,8 @@ class GraphClient {
     data: unknown,
     rawResponse = false,
     excludeResponse = false,
-    outputFormat: 'json' | 'toon' = this.outputFormat
+    outputFormat: 'json' | 'toon' = this.outputFormat,
+    preserveODataMetadata = false
   ): McpResponse {
     // If excludeResponse is true, only return success indication
     if (excludeResponse) {
@@ -667,7 +677,9 @@ class GraphClient {
         }
       };
 
-      removeODataProps(responseData.data as Record<string, unknown>);
+      if (!preserveODataMetadata) {
+        removeODataProps(responseData.data as Record<string, unknown>);
+      }
 
       return {
         content: [
@@ -707,7 +719,9 @@ class GraphClient {
       }
     };
 
-    removeODataProps(data as Record<string, unknown>);
+    if (!preserveODataMetadata) {
+      removeODataProps(data as Record<string, unknown>);
+    }
 
     return {
       content: [{ type: 'text', text: this.serializeData(data, outputFormat, true) }],
