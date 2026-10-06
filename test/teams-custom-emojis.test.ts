@@ -76,7 +76,9 @@ describe('Teams custom emojis (real generated clients)', () => {
   }
 
   function handler(name: string, discovery = false): ToolHandler {
-    const calls = discovery ? mockServer.tool.mock.calls : mockServer.registerTool.mock.calls;
+    const calls = discovery
+      ? [...mockServer.tool.mock.calls, ...mockServer.registerTool.mock.calls]
+      : mockServer.registerTool.mock.calls;
     const call = calls.find((entry: unknown[]) => entry[0] === name);
     expect(call, `tool ${name} should be registered`).toBeDefined();
     return call![call!.length - 1] as ToolHandler;
