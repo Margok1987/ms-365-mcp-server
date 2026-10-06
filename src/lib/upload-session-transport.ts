@@ -54,7 +54,7 @@ function buildUploadSessionRetryPolicy(
 async function fetchUploadSessionWithThrottleRetry(
   fetchImpl: FetchLike,
   uploadUrl: string,
-  init: RequestInit,
+  init: Parameters<FetchLike>[1],
   retryPolicy: UploadSessionRetryPolicy
 ): Promise<Response> {
   let attempt = 0;
