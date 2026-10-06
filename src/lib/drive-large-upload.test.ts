@@ -17,10 +17,10 @@ describe('uploadOpenAIFileToDrive', () => {
     let exists = false;
     const sourceFetch = fileFetch(new Uint8Array([1, 2, 3, 4]));
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === 'https://files.example.test/file') {
-        return sourceFetch(url, init);
+      if (String(url) === 'https://files.example.test/file') {
+        return sourceFetch(String(url), init);
       }
-      if (url === 'https://upload.example.test/session' && init?.method === 'PUT') {
+      if (String(url) === 'https://upload.example.test/session' && init?.method === 'PUT') {
         exists = true;
         return new Response(JSON.stringify({ id: 'item-1', name: 'report.pdf', size: 4 }), {
           status: 201,
@@ -103,10 +103,10 @@ describe('uploadOpenAIFileToDrive', () => {
     let afterPut = false;
     let uploadPuts = 0;
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === 'https://files.example.test/file') {
+      if (String(url) === 'https://files.example.test/file') {
         return new Response(new Uint8Array([7, 8, 9]));
       }
-      if (url === 'https://upload.example.test/session' && init?.method === 'PUT') {
+      if (String(url) === 'https://upload.example.test/session' && init?.method === 'PUT') {
         uploadPuts += 1;
         afterPut = true;
         throw new Error('connection reset after provider accepted final range');
