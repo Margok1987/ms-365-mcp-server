@@ -3714,6 +3714,110 @@ describe('graph-tools', () => {
       expect(names).toContain('download-bytes');
     });
 
+
+
+    it('search-tools surfaces upload-drive-file in the files category', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+
+      const server = createMockServer();
+      const { registerDiscoveryTools } = await loadModule();
+      registerDiscoveryTools(server as any, {} as any);
+
+      const result = await server.tools
+        .get('search-tools')!
+        .handler({ query: 'large upload', category: 'files', limit: 20 });
+      const payload = JSON.parse(result.content[0].text);
+      const names = payload.tools.map((t: any) => t.name);
+      expect(names).toContain('upload-drive-file');
+    });
+
+    it('get-tool-schema exposes the bounded large-upload contract', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+
+      const server = createMockServer();
+      const { registerDiscoveryTools } = await loadModule();
+      registerDiscoveryTools(server as any, {} as any);
+
+      const result = await server.tools
+        .get('get-tool-schema')!
+        .handler({ tool_name: 'upload-drive-file' });
+      const schema = JSON.parse(result.content[0].text);
+      expect(schema.name).toBe('upload-drive-file');
+      expect(schema.path).toBe('tool:upload-drive-file');
+
+      const params = schema.parameters as Array<{ name: string; required: boolean }>;
+      expect(params.find((p) => p.name === 'file')?.required).toBe(true);
+      expect(params.find((p) => p.name === 'driveId')?.required).toBe(true);
+      expect(params.find((p) => p.name === 'parentItemId')?.required).toBe(true);
+      expect(params.find((p) => p.name === 'confirm')?.required).toBe(true);
+      expect(schema.description).toContain('existing content is never overwritten');
+    });
+
+    it('execute-tool advertises the ChatGPT host file parameter', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+
+      const server = createMockServer();
+      const { registerDiscoveryTools } = await loadModule();
+      registerDiscoveryTools(server as any, {} as any);
+
+      const call = server.registerTool.mock.calls.find(([name]: any[]) => name === 'execute-tool');
+      expect(call).toBeDefined();
+      const config = call![1] as any;
+      expect(config._meta).toEqual({ 'openai/fileParams': ['file'] });
+      expect(config.inputSchema.shape.file).toBeDefined();
+    });
+
+    it('large upload fails closed without top-level file or confirm=true', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+
+      const graphClient = { graphRequest: vi.fn() };
+      const server = createMockServer();
+      const { registerDiscoveryTools } = await loadModule();
+      registerDiscoveryTools(server as any, graphClient as any);
+      const execute = server.tools.get('execute-tool')!.handler;
+
+      const missingFile = await execute({
+        tool_name: 'upload-drive-file',
+        parameters: { driveId: 'drive-1', parentItemId: 'folder-1', confirm: true },
+      });
+      expect(missingFile.isError).toBe(true);
+      expect(JSON.parse(missingFile.content[0].text).error).toMatch(
+        /requires a ChatGPT file parameter/i
+      );
+
+      const nestedFile = await execute({
+        tool_name: 'upload-drive-file',
+        parameters: {
+          driveId: 'drive-1',
+          parentItemId: 'folder-1',
+          confirm: true,
+          file: {
+            download_url: 'https://files.example.test/file',
+            file_id: 'file_nested',
+          },
+        },
+      });
+      expect(nestedFile.isError).toBe(true);
+      expect(JSON.parse(nestedFile.content[0].text).error).toMatch(/top-level execute-tool\.file/i);
+
+      const missingConfirm = await execute({
+        tool_name: 'upload-drive-file',
+        parameters: { driveId: 'drive-1', parentItemId: 'folder-1' },
+        file: {
+          download_url: 'https://files.example.test/file',
+          file_id: 'file_1',
+          file_name: 'report.pdf',
+        },
+      });
+      expect(missingConfirm.isError).toBe(true);
+      expect(JSON.parse(missingConfirm.content[0].text).error).toMatch(/confirm=true is required/i);
+      expect(graphClient.graphRequest).not.toHaveBeenCalled();
+    });
+
     it('get-tool-schema returns the download-bytes parameter schema', async () => {
       mockEndpoints.length = 0;
       mockEndpointsJson = [];

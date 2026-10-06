@@ -70,6 +70,26 @@ describe('GraphClient audit metadata', () => {
     });
   });
 
+  it('preserves full OData metadata when explicitly requested', async () => {
+    const body = {
+      value: [{ id: 'm1' }],
+      '@odata.context': 'https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.message)',
+      '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skip=1',
+    };
+    fetchWithResilienceMock.mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+
+    const result = await createGraphClient().graphRequest('/$batch', {
+      preserveODataMetadata: true,
+    });
+
+    expect(JSON.parse(result.content[0].text)).toEqual(body);
+  });
+
   it('reports result_has_more false, not absent, for a complete collection', async () => {
     fetchWithResilienceMock.mockResolvedValue(
       new Response(JSON.stringify({ value: [{ id: 'm1' }] }), {

@@ -40,6 +40,8 @@ import { getRequestTokens } from './request-context.js';
 import { parseTeamsUrl } from './lib/teams-url-parser.js';
 import { buildBM25Index, scoreQuery, tokenize, type BM25Index } from './lib/bm25.js';
 import { deriveTargetResource, type AuditTargetResource } from './audit-target-resource.js';
+import { uploadOpenAIFileToDrive } from './lib/drive-large-upload.js';
+import type { OpenAIFileParam } from './lib/openai-file-source.js';
 export interface DiscoverySearchIndex {
   bm25: BM25Index;
   nameTokens: Map<string, Set<string>>;
@@ -839,6 +841,8 @@ interface UtilityTool {
   buildSchema: (ctx: UtilityToolContext) => Record<string, z.ZodTypeAny>;
   execute: (params: Record<string, unknown>, ctx: UtilityToolContext) => Promise<CallToolResult>;
   readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  fileParams?: string[];
   openWorldHint?: boolean;
   // When true, this tool writes to the server's local filesystem and is only
   // registered in stdio mode, or over HTTP with --http-local-file-tools.
@@ -1131,6 +1135,31 @@ async function mintDownloadUrl(
   };
 }
 
+const OPENAI_FILE_PARAM_SCHEMA = z
+  .object({
+    download_url: z.string(),
+    file_id: z.string(),
+    mime_type: z.string().optional(),
+    file_name: z.string().optional(),
+  })
+  .strict();
+
+function parseGraphUtilityJson(response: CallToolResult, operation: string): Record<string, unknown> {
+  if (response.isError) {
+    const text =
+      response.content.find((item): item is TextContent => item.type === 'text')?.text ??
+      '{"error":"unknown Graph error"}';
+    throw new Error(`${operation} failed: ${text}`);
+  }
+  const text = response.content.find((item): item is TextContent => item.type === 'text')?.text;
+  if (!text) throw new Error(`${operation} returned no JSON body.`);
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${operation} returned a non-object JSON body.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export const UTILITY_TOOLS: readonly UtilityTool[] = [
   {
     name: 'parse-teams-url',
@@ -1157,6 +1186,187 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
       } catch (error) {
         return {
           content: [{ type: 'text', text: JSON.stringify({ error: (error as Error).message }) }],
+          isError: true,
+        };
+      }
+    },
+  },
+  {
+    name: 'upload-drive-file',
+    method: 'POST',
+    path: 'tool:upload-drive-file',
+    description:
+      'Upload a ChatGPT-provided file to a OneDrive/SharePoint drive folder using a server-side resumable upload session. The file bytes never pass through the model or base64 tool arguments. This first qualified scope creates a new file only: destination conflicts fail and existing content is never overwritten.',
+    searchKeywords:
+      'upload onedrive sharepoint document pdf powerpoint binary resumable chunk host file parameter',
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    fileParams: ['file'],
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        file: OPENAI_FILE_PARAM_SCHEMA.describe(
+          'ChatGPT file parameter. ChatGPT supplies download_url and file_id; mime_type and file_name are optional.'
+        ),
+        driveId: z.string().min(1).describe('Destination OneDrive/SharePoint drive id.'),
+        parentItemId: z.string().min(1).describe('Destination folder driveItem id.'),
+        fileName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Optional destination file name override. Defaults to file.file_name.'),
+        confirm: z
+          .literal(true)
+          .describe('Required explicit confirmation. Must be true before any upload session is created.'),
+      };
+      if (ctx.multiAccount) {
+        schema['account'] = z
+          .string()
+          .optional()
+          .describe(
+            'Account to use when multiple Microsoft accounts are configured. Required when multiple accounts exist (see list-accounts).'
+          );
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      if (params.confirm !== true) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'confirm=true is required before upload-drive-file can create a file.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const file = params.file as OpenAIFileParam | undefined;
+      const driveId = params.driveId;
+      const parentItemId = params.parentItemId;
+      const fileNameOverride = params.fileName;
+      const accountParam = params.account as string | undefined;
+
+      if (
+        !file ||
+        typeof file.download_url !== 'string' ||
+        typeof file.file_id !== 'string' ||
+        typeof driveId !== 'string' ||
+        typeof parentItemId !== 'string'
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'file, driveId, and parentItemId are required.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (fileNameOverride !== undefined && typeof fileNameOverride !== 'string') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'fileName must be a string.' }) }],
+          isError: true,
+        };
+      }
+
+      try {
+        const accountModeError = await checkAccountParamInBearerMode(accountParam, authManager);
+        if (accountModeError) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: accountModeError }) }],
+            isError: true,
+          };
+        }
+
+        let accountAccessToken: string | undefined;
+        if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+          accountAccessToken = await authManager.getTokenForAccount(accountParam);
+        }
+
+        const graphJson = async (
+          endpoint: string,
+          options: Parameters<GraphClient['graphRequest']>[1] = {},
+          allow404 = false
+        ): Promise<Record<string, unknown> | null> => {
+          const response = (await graphClient.graphRequest(endpoint, {
+            ...options,
+            accessToken: accountAccessToken,
+            forceJsonOutput: true,
+          })) as CallToolResult;
+          if (allow404 && response.isError && auditHttpStatus(response._meta?.http_status) === 404) {
+            return null;
+          }
+          return parseGraphUtilityJson(response, endpoint);
+        };
+
+        const result = await uploadOpenAIFileToDrive(
+          {
+            file,
+            driveId,
+            parentItemId,
+            ...(fileNameOverride ? { fileName: fileNameOverride } : {}),
+          },
+          {
+            createUploadSession: async ({ driveId: targetDrive, parentItemId: targetParent, fileName }) => {
+              const destinationPath =
+                `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
+                  targetParent
+                )}:/${encodeURIComponent(fileName)}`;
+              const response = await graphJson(`${destinationPath}:/createUploadSession`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  item: {
+                    '@microsoft.graph.conflictBehavior': 'fail',
+                    name: fileName,
+                  },
+                }),
+              });
+              return { uploadUrl: String(response?.uploadUrl ?? '') };
+            },
+            readDestination: async ({ driveId: targetDrive, parentItemId: targetParent, fileName }) => {
+              const destinationPath =
+                `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
+                  targetParent
+                )}:/${encodeURIComponent(fileName)}`;
+              return (await graphJson(
+                `${destinationPath}?$select=id,name,size,parentReference,file`,
+                {},
+                true
+              )) as import('./lib/drive-large-upload.js').DriveItemReadback | null;
+            },
+          }
+        );
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          _meta: {
+            result_count: 1,
+            result_bytes: result.size,
+          },
+        };
+      } catch (error) {
+        const code =
+          error && typeof error === 'object' && 'code' in error
+            ? String((error as { code?: unknown }).code ?? 'UPLOAD_FAILED')
+            : 'UPLOAD_FAILED';
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : String(error),
+                code,
+              }),
+            },
+          ],
           isError: true,
         };
       }
@@ -1688,6 +1898,26 @@ function registerUtilityToolWithMcp(
   utility: UtilityTool,
   ctx: UtilityToolContext
 ): void {
+  if (utility.fileParams?.length) {
+    server.registerTool(
+      utility.name,
+      {
+        title: utility.name,
+        description: utility.description,
+        inputSchema: z.object(utility.buildSchema(ctx)),
+        annotations: {
+          title: utility.name,
+          readOnlyHint: utility.readOnlyHint ?? true,
+          destructiveHint: utility.destructiveHint ?? false,
+          openWorldHint: utility.openWorldHint ?? true,
+        },
+        _meta: { 'openai/fileParams': utility.fileParams },
+      },
+      async (params: Record<string, unknown>) => executeUtilityTool(utility, ctx, params)
+    );
+    return;
+  }
+
   server.tool(
     utility.name,
     utility.description,
@@ -1695,6 +1925,7 @@ function registerUtilityToolWithMcp(
     {
       title: utility.name,
       readOnlyHint: utility.readOnlyHint ?? true,
+      destructiveHint: utility.destructiveHint ?? false,
       openWorldHint: utility.openWorldHint ?? true,
     },
     async (params) => executeUtilityTool(utility, ctx, params)
@@ -2190,6 +2421,7 @@ async function executeGraphTool(
       accessToken?: string;
       apiVersion?: string;
       forceJsonOutput?: boolean;
+      preserveODataMetadata?: boolean;
     } = {
       method: tool.method.toUpperCase(),
       headers,
@@ -2230,6 +2462,10 @@ async function executeGraphTool(
       );
     } else if (isProbablyMediaContent) {
       options.rawResponse = true;
+    }
+
+    if (tool.alias === 'graph-batch') {
+      options.preserveODataMetadata = true;
     }
 
     // Set includeHeaders if requested
@@ -3093,25 +3329,33 @@ export function registerDiscoveryTools(
     }
   );
 
-  server.tool(
+  server.registerTool(
     'execute-tool',
-    'Execute a Microsoft Graph API tool by name. Workflow: search-tools → get-tool-schema → execute-tool. Call get-tool-schema first for any tool you have not seen before — passing the wrong shape to parameters will fail validation or return a Graph 400. For list endpoints, prefer modest $top plus $select.',
-    {
-      tool_name: z.string().describe('Name of the tool to execute (e.g., "list-mail-messages")'),
-      parameters: z
-        .record(z.any())
-        .describe(
-          'Parameters shaped per get-tool-schema. Path/query/header params go at the top level; request bodies go under "body".'
-        )
-        .optional(),
-    },
     {
       title: 'execute-tool',
-      readOnlyHint: false,
-      destructiveHint: true,
-      openWorldHint: true,
+      description:
+        'Execute a Microsoft Graph API tool by name. Workflow: search-tools → get-tool-schema → execute-tool. Call get-tool-schema first for any tool you have not seen before. For tools that accept a ChatGPT file parameter, the file is supplied through the top-level execute-tool.file field and must not be nested inside parameters.',
+      inputSchema: z.object({
+        tool_name: z.string().describe('Name of the tool to execute (e.g., "list-mail-messages")'),
+        parameters: z
+          .record(z.any())
+          .describe(
+            'Parameters shaped per get-tool-schema. Path/query/header params go at the top level; request bodies go under "body". Do not place ChatGPT file parameters here.'
+          )
+          .optional(),
+        file: OPENAI_FILE_PARAM_SCHEMA.optional().describe(
+          'Optional ChatGPT host file parameter. Used only by discovered utilities that explicitly declare fileParams.'
+        ),
+      }),
+      annotations: {
+        title: 'execute-tool',
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+      _meta: { 'openai/fileParams': ['file'] },
     },
-    async ({ tool_name, parameters = {} }) => {
+    async ({ tool_name, parameters = {}, file }) => {
       const toolData = toolsRegistry.get(tool_name);
       if (toolData) {
         return executeGraphTool(
@@ -3124,6 +3368,36 @@ export function registerDiscoveryTools(
       }
       const utility = utilityByName.get(tool_name);
       if (utility) {
+        if (utility.fileParams?.includes('file')) {
+          if (Object.prototype.hasOwnProperty.call(parameters, 'file')) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    error:
+                      'File parameters must be supplied through the top-level execute-tool.file field, not nested inside parameters.',
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          if (file === undefined) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: `Tool ${tool_name} requires a ChatGPT file parameter.`,
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          return executeUtilityTool(utility, utilityCtx, { ...parameters, file });
+        }
         return executeUtilityTool(utility, utilityCtx, parameters);
       }
       const deniedPolicy = deniedTools.get(tool_name);

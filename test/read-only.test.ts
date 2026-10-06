@@ -104,9 +104,9 @@ describe('Read-Only Mode', () => {
 
     registerGraphTools(mockServer, {} as GraphClient, options.readOnly);
 
-    // 4 mocked endpoints (get-schedule skipped: workScopes only, no orgMode) + utilities
-    // (parse-teams-url, download-bytes, download-bytes-to-file, get-download-url)
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
+    // 4 mocked endpoints (get-schedule skipped: workScopes only, no orgMode) plus
+    // upload-drive-file via registerTool; legacy utilities remain on tool().
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(5);
     expect(mockServer.tool).toHaveBeenCalledTimes(4);
 
     const toolCalls = mockServer.registerTool.mock.calls.map((call: unknown[]) => call[0]);
