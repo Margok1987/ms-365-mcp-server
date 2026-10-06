@@ -1198,7 +1198,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     description:
       'Upload a ChatGPT-provided file to a OneDrive/SharePoint drive folder using a server-side resumable upload session. The file bytes never pass through the model or base64 tool arguments. This first qualified scope creates a new file only: destination conflicts fail and existing content is never overwritten.',
     searchKeywords:
-      'large file upload onedrive upload document pdf powerpoint binary resumable chunk file param',
+      'upload onedrive sharepoint document pdf powerpoint binary resumable chunk host file parameter',
     readOnlyHint: false,
     destructiveHint: false,
     openWorldHint: true,
