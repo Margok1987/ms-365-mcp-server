@@ -68,6 +68,69 @@ describe('uploadChunksToSession', () => {
     expect(result.chunksUploaded).toBe(2);
   });
 
+  it('honors Retry-After on HTTP 429 and safely retries the exact chunk', async () => {
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'TooManyRequests' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '2' },
+        })
+      )
+      .mockResolvedValueOnce(json(201, { id: 'item-throttled', size: 5 }));
+
+    const result = await uploadChunksToSession({
+      uploadUrl: 'https://upload.example.test/session',
+      totalBytes: 5,
+      source: bytes(new Uint8Array([1, 2, 3, 4, 5])),
+      fetchImpl,
+      chunkSize: GRAPH_UPLOAD_GRANULARITY,
+      sleep,
+    });
+
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const firstHeaders = new Headers(fetchImpl.mock.calls[0][1]?.headers);
+    const retryHeaders = new Headers(fetchImpl.mock.calls[1][1]?.headers);
+    expect(firstHeaders.get('content-range')).toBe('bytes 0-4/5');
+    expect(retryHeaders.get('content-range')).toBe('bytes 0-4/5');
+    expect(result.driveItem.id).toBe('item-throttled');
+  });
+
+  it('bounds repeated HTTP 429 retries and surfaces the final throttle', async () => {
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    const throttled = () =>
+      new Response(JSON.stringify({ error: { code: 'TooManyRequests' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '0' },
+      });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(throttled())
+      .mockResolvedValueOnce(throttled())
+      .mockResolvedValueOnce(throttled())
+      .mockResolvedValueOnce(throttled());
+
+    await expect(
+      uploadChunksToSession({
+        uploadUrl: 'https://upload.example.test/session',
+        totalBytes: 1,
+        source: bytes(new Uint8Array([1])),
+        fetchImpl,
+        chunkSize: GRAPH_UPLOAD_GRANULARITY,
+        sleep,
+      })
+    ).rejects.toMatchObject({
+      code: 'UPLOAD_CHUNK_REJECTED',
+      details: { status: 429 },
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(3);
+  });
+
   it('rejects a non-320-KiB chunk size', async () => {
     await expect(
       uploadChunksToSession({
