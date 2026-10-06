@@ -1,3 +1,5 @@
+import { backoffDelayMs, loadResilienceConfig, parseRetryAfterMs } from './graph-resilience.js';
+
 export const GRAPH_UPLOAD_GRANULARITY = 320 * 1024;
 export const DEFAULT_UPLOAD_CHUNK_SIZE = 16 * GRAPH_UPLOAD_GRANULARITY; // 5 MiB
 export const MAX_GRAPH_FRAGMENT_SIZE = 60 * 1024 * 1024;
@@ -10,6 +12,7 @@ export interface UploadSessionTransportOptions {
   source: AsyncIterable<Uint8Array>;
   fetchImpl?: FetchLike;
   chunkSize?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface UploadSessionTransportResult {
@@ -26,6 +29,54 @@ export class UploadSessionTransportError extends Error {
   ) {
     super(message);
     this.name = 'UploadSessionTransportError';
+  }
+}
+
+interface UploadSessionRetryPolicy {
+  maxRetries: number;
+  baseBackoffMs: number;
+  maxBackoffMs: number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+function buildUploadSessionRetryPolicy(
+  sleep?: (ms: number) => Promise<void>
+): UploadSessionRetryPolicy {
+  const config = loadResilienceConfig();
+  return {
+    maxRetries: config.maxRetries,
+    baseBackoffMs: config.baseBackoffMs,
+    maxBackoffMs: config.maxBackoffMs,
+    sleep: sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+  };
+}
+
+async function fetchUploadSessionWithThrottleRetry(
+  fetchImpl: FetchLike,
+  uploadUrl: string,
+  init: Parameters<FetchLike>[1],
+  retryPolicy: UploadSessionRetryPolicy
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    const response = await fetchImpl(uploadUrl, init);
+    if (response.status !== 429 || attempt >= retryPolicy.maxRetries) {
+      return response;
+    }
+
+    const retryAfter = parseRetryAfterMs(response.headers.get('retry-after'));
+    const delayMs =
+      retryAfter ??
+      backoffDelayMs(attempt, retryPolicy.baseBackoffMs, retryPolicy.maxBackoffMs);
+
+    try {
+      await response.arrayBuffer();
+    } catch {
+      // Best-effort drain before retrying so the underlying connection can be reused.
+    }
+
+    attempt += 1;
+    await retryPolicy.sleep(delayMs);
   }
 }
 
@@ -104,9 +155,15 @@ function nextExpectedStart(body: Record<string, unknown>): number | null {
 
 async function sessionExpectedStart(
   fetchImpl: FetchLike,
-  uploadUrl: string
+  uploadUrl: string,
+  retryPolicy: UploadSessionRetryPolicy
 ): Promise<number | null> {
-  const response = await fetchImpl(uploadUrl, { method: 'GET' });
+  const response = await fetchUploadSessionWithThrottleRetry(
+    fetchImpl,
+    uploadUrl,
+    { method: 'GET' },
+    retryPolicy
+  );
   if (!response.ok) return null;
   return nextExpectedStart(await readJson(response));
 }
@@ -117,6 +174,7 @@ async function putChunk(
   chunk: Uint8Array,
   start: number,
   totalBytes: number,
+  retryPolicy: UploadSessionRetryPolicy,
   allowRetryAfterReconcile = true
 ): Promise<{ finalItem?: Record<string, unknown>; reconciledAccepted?: boolean }> {
   const end = start + chunk.byteLength - 1;
@@ -124,14 +182,19 @@ async function putChunk(
   let response: Response;
 
   try {
-    response = await fetchImpl(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Length': String(chunk.byteLength),
-        'Content-Range': `bytes ${start}-${end}/${totalBytes}`,
+    response = await fetchUploadSessionWithThrottleRetry(
+      fetchImpl,
+      uploadUrl,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Length': String(chunk.byteLength),
+          'Content-Range': `bytes ${start}-${end}/${totalBytes}`,
+        },
+        body: Buffer.from(chunk),
       },
-      body: Buffer.from(chunk),
-    });
+      retryPolicy
+    );
   } catch (error) {
     if (isFinal) {
       throw new UploadSessionTransportError(
@@ -141,12 +204,12 @@ async function putChunk(
       );
     }
 
-    const expected = await sessionExpectedStart(fetchImpl, uploadUrl);
+    const expected = await sessionExpectedStart(fetchImpl, uploadUrl, retryPolicy);
     if (expected !== null && expected > end) {
       return { reconciledAccepted: true };
     }
     if (expected === start && allowRetryAfterReconcile) {
-      return putChunk(fetchImpl, uploadUrl, chunk, start, totalBytes, false);
+      return putChunk(fetchImpl, uploadUrl, chunk, start, totalBytes, retryPolicy, false);
     }
     throw new UploadSessionTransportError(
       'CHUNK_RESULT_UNCERTAIN',
@@ -220,6 +283,7 @@ export async function uploadChunksToSession(
 ): Promise<UploadSessionTransportResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const chunkSize = options.chunkSize ?? DEFAULT_UPLOAD_CHUNK_SIZE;
+  const retryPolicy = buildUploadSessionRetryPolicy(options.sleep);
 
   assertUploadUrl(options.uploadUrl);
   assertChunkSize(chunkSize);
@@ -248,7 +312,8 @@ export async function uploadChunksToSession(
       options.uploadUrl,
       chunk,
       offset,
-      options.totalBytes
+      options.totalBytes,
+      retryPolicy
     );
     offset += chunk.byteLength;
     chunksUploaded += 1;
