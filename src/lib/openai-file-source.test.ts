@@ -13,6 +13,8 @@ async function collect(source: AsyncIterable<Uint8Array>): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+const publicLookup = vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]);
+
 describe('OpenAI file-param source', () => {
   it('stages a host-provided HTTPS file without base64', async () => {
     const tempRoot = await mkdtemp(path.join(tmpdir(), 'ms365-file-test-'));
@@ -24,7 +26,7 @@ describe('OpenAI file-param source', () => {
         file_name: 'report.pdf',
         mime_type: 'application/pdf',
       },
-      { fetchImpl: fetchImpl as typeof fetch, tempRoot }
+      { fetchImpl: fetchImpl as typeof fetch, lookupAll: publicLookup, tempRoot }
     );
 
     expect(staged.size).toBe(4);
@@ -49,7 +51,7 @@ describe('OpenAI file-param source', () => {
 
     const staged = await stageOpenAIFile(
       { download_url: 'https://files.example.test/start', file_id: 'file_1' },
-      { fetchImpl: fetchImpl as typeof fetch, tempRoot }
+      { fetchImpl: fetchImpl as typeof fetch, lookupAll: publicLookup, tempRoot }
     );
     expect(staged.size).toBe(1);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -77,9 +79,21 @@ describe('OpenAI file-param source', () => {
     await expect(
       stageOpenAIFile(
         { download_url: 'https://files.example.test/start', file_id: 'file_2' },
-        { fetchImpl: fetchImpl as typeof fetch }
+        { fetchImpl: fetchImpl as typeof fetch, lookupAll: publicLookup }
       )
     ).rejects.toMatchObject({ code: 'UNSAFE_FILE_URL' });
+  });
+
+  it('rejects a public hostname that resolves to a private address', async () => {
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array([1])));
+    const privateLookup = vi.fn(async () => [{ address: '10.10.10.10', family: 4 }]);
+    await expect(
+      stageOpenAIFile(
+        { download_url: 'https://files.example.test/file', file_id: 'file_dns_private' },
+        { fetchImpl: fetchImpl as typeof fetch, lookupAll: privateLookup }
+      )
+    ).rejects.toMatchObject({ code: 'UNSAFE_FILE_URL' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('rejects non-success file downloads', async () => {
@@ -87,7 +101,7 @@ describe('OpenAI file-param source', () => {
     await expect(
       stageOpenAIFile(
         { download_url: 'https://files.example.test/file', file_id: 'file_3' },
-        { fetchImpl: fetchImpl as typeof fetch }
+        { fetchImpl: fetchImpl as typeof fetch, lookupAll: publicLookup }
       )
     ).rejects.toMatchObject({ code: 'FILE_DOWNLOAD_REJECTED' });
   });

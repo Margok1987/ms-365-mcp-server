@@ -1,3 +1,4 @@
+import { lookup } from 'dns/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { mkdtemp, rm, stat } from 'fs/promises';
 import { isIP } from 'net';
@@ -40,24 +41,78 @@ function isPrivateIpv4(host: string): boolean {
   }
   const [a, b] = octets;
   return (
+    a === 0 ||
     a === 10 ||
     a === 127 ||
-    a === 0 ||
+    (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
+    (a === 192 && b === 0) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
   );
 }
 
 function isPrivateIpv6(host: string): boolean {
   const h = host.toLowerCase();
+  if (h.startsWith('::ffff:')) {
+    const mapped = h.slice('::ffff:'.length);
+    if (isIP(mapped) === 4) return isPrivateIpv4(mapped);
+  }
   return (
     h === '::1' ||
     h === '::' ||
     h.startsWith('fc') ||
     h.startsWith('fd') ||
-    /^fe[89ab]/.test(h)
+    /^fe[89ab]/.test(h) ||
+    h.startsWith('ff') ||
+    h.startsWith('2001:db8:')
   );
+}
+
+export type LookupAll = (
+  hostname: string
+) => Promise<Array<{ address: string; family: number }>>;
+
+const defaultLookupAll: LookupAll = async (hostname) =>
+  lookup(hostname, { all: true, verbatim: true });
+
+function isUnsafeResolvedAddress(address: string): boolean {
+  const kind = isIP(address);
+  if (kind === 4) return isPrivateIpv4(address);
+  if (kind === 6) return isPrivateIpv6(address);
+  return true;
+}
+
+async function assertSafeResolvedHost(url: URL, lookupAll: LookupAll): Promise<void> {
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isIP(host) !== 0) return;
+
+  let resolved: Array<{ address: string; family: number }>;
+  try {
+    resolved = await lookupAll(host);
+  } catch (error) {
+    throw new OpenAIFileSourceError(
+      'FILE_DNS_LOOKUP_FAILED',
+      'File download host could not be resolved safely.',
+      { host, cause: error instanceof Error ? error.message : String(error) }
+    );
+  }
+  if (resolved.length === 0) {
+    throw new OpenAIFileSourceError(
+      'FILE_DNS_LOOKUP_FAILED',
+      'File download host resolved to no addresses.',
+      { host }
+    );
+  }
+  if (resolved.some((entry) => isUnsafeResolvedAddress(entry.address))) {
+    throw new OpenAIFileSourceError(
+      'UNSAFE_FILE_URL',
+      'File download host resolves to a private, loopback, link-local, multicast, or otherwise non-public address.',
+      { host }
+    );
+  }
 }
 
 export function assertSafeFileDownloadUrl(raw: string): URL {
@@ -93,10 +148,12 @@ export function assertSafeFileDownloadUrl(raw: string): URL {
 async function fetchWithSafeRedirects(
   initial: URL,
   fetchImpl: typeof fetch,
+  lookupAll: LookupAll,
   maxRedirects = 5
 ): Promise<Response> {
   let current = initial;
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
+    await assertSafeResolvedHost(current, lookupAll);
     const response = await fetchImpl(current, { method: 'GET', redirect: 'manual' });
     if (response.status >= 300 && response.status < 400) {
       if (redirect === maxRedirects) {
@@ -147,12 +204,13 @@ function validateFileParam(file: OpenAIFileParam): void {
 
 export async function stageOpenAIFile(
   file: OpenAIFileParam,
-  options: { fetchImpl?: typeof fetch; tempRoot?: string } = {}
+  options: { fetchImpl?: typeof fetch; lookupAll?: LookupAll; tempRoot?: string } = {}
 ): Promise<StagedOpenAIFile> {
   validateFileParam(file);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const lookupAll = options.lookupAll ?? defaultLookupAll;
   const url = assertSafeFileDownloadUrl(file.download_url);
-  const response = await fetchWithSafeRedirects(url, fetchImpl);
+  const response = await fetchWithSafeRedirects(url, fetchImpl, lookupAll);
   if (!response.body) {
     throw new OpenAIFileSourceError('EMPTY_FILE_RESPONSE', 'File download response has no body.');
   }

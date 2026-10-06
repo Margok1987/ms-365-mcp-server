@@ -1,4 +1,4 @@
-import type { OpenAIFileParam } from './openai-file-source.js';
+import type { LookupAll, OpenAIFileParam } from './openai-file-source.js';
 import { stageOpenAIFile } from './openai-file-source.js';
 import {
   UploadSessionTransportError,
@@ -26,6 +26,7 @@ export interface LargeDriveUploadDependencies {
     fileName: string;
   }): Promise<DriveItemReadback | null>;
   fetchImpl?: FetchLike;
+  lookupAll?: LookupAll;
   tempRoot?: string;
 }
 
@@ -149,6 +150,7 @@ export async function uploadOpenAIFileToDrive(
 
   const staged = await stageOpenAIFile(input.file, {
     fetchImpl: deps.fetchImpl as typeof fetch | undefined,
+    lookupAll: deps.lookupAll,
     tempRoot: deps.tempRoot,
   });
 

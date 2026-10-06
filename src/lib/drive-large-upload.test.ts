@@ -11,6 +11,8 @@ function fileFetch(bytes: Uint8Array) {
   });
 }
 
+const publicLookup = vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]);
+
 describe('uploadOpenAIFileToDrive', () => {
   it('qualifies a new-file upload with exact destination readback', async () => {
     const tempRoot = await mkdtemp(path.join(tmpdir(), 'drive-large-upload-'));
@@ -43,6 +45,7 @@ describe('uploadOpenAIFileToDrive', () => {
       {
         tempRoot,
         fetchImpl,
+        lookupAll: publicLookup,
         createUploadSession: vi.fn(async () => ({
           uploadUrl: 'https://upload.example.test/session',
         })),
@@ -86,6 +89,7 @@ describe('uploadOpenAIFileToDrive', () => {
         {
           tempRoot,
           fetchImpl: fileFetch(new Uint8Array([1])) as unknown as typeof fetch,
+          lookupAll: publicLookup,
           createUploadSession,
           readDestination: vi.fn(async () => ({
             id: 'existing',
@@ -127,6 +131,7 @@ describe('uploadOpenAIFileToDrive', () => {
       {
         tempRoot,
         fetchImpl,
+        lookupAll: publicLookup,
         createUploadSession: vi.fn(async () => ({
           uploadUrl: 'https://upload.example.test/session',
         })),
