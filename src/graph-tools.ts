@@ -2421,6 +2421,7 @@ async function executeGraphTool(
       accessToken?: string;
       apiVersion?: string;
       forceJsonOutput?: boolean;
+      preserveODataMetadata?: boolean;
     } = {
       method: tool.method.toUpperCase(),
       headers,
@@ -2461,6 +2462,10 @@ async function executeGraphTool(
       );
     } else if (isProbablyMediaContent) {
       options.rawResponse = true;
+    }
+
+    if (tool.alias === 'graph-batch') {
+      options.preserveODataMetadata = true;
     }
 
     // Set includeHeaders if requested
