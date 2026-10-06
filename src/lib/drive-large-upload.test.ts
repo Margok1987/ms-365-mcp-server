@@ -102,10 +102,20 @@ describe('uploadOpenAIFileToDrive', () => {
     expect(createUploadSession).not.toHaveBeenCalled();
   });
 
-  it('reconciles an uncertain final PUT by exact destination path without replay', async () => {
+  it('keeps an uncertain final PUT fail-closed even if a same-name same-size item appears', async () => {
     const tempRoot = await mkdtemp(path.join(tmpdir(), 'drive-large-upload-'));
     let afterPut = false;
     let uploadPuts = 0;
+    const readDestination = vi.fn(async () =>
+      afterPut
+        ? {
+            id: 'foreign-item',
+            name: 'uncertain.pdf',
+            size: 3,
+            parentReference: { driveId: 'drive-1', id: 'parent-1' },
+          }
+        : null
+    );
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url) === 'https://files.example.test/file') {
         return new Response(new Uint8Array([7, 8, 9]));
@@ -113,44 +123,36 @@ describe('uploadOpenAIFileToDrive', () => {
       if (String(url) === 'https://upload.example.test/session' && init?.method === 'PUT') {
         uploadPuts += 1;
         afterPut = true;
-        throw new Error('connection reset after provider accepted final range');
+        throw new Error('connection reset after provider may have accepted final range');
       }
       throw new Error('unexpected request');
     });
 
-    const result = await uploadOpenAIFileToDrive(
-      {
-        file: {
-          download_url: 'https://files.example.test/file',
-          file_id: 'file_3',
-          file_name: 'uncertain.pdf',
+    await expect(
+      uploadOpenAIFileToDrive(
+        {
+          file: {
+            download_url: 'https://files.example.test/file',
+            file_id: 'file_3',
+            file_name: 'uncertain.pdf',
+          },
+          driveId: 'drive-1',
+          parentItemId: 'parent-1',
         },
-        driveId: 'drive-1',
-        parentItemId: 'parent-1',
-      },
-      {
-        tempRoot,
-        fetchImpl,
-        lookupAll: publicLookup,
-        createUploadSession: vi.fn(async () => ({
-          uploadUrl: 'https://upload.example.test/session',
-        })),
-        readDestination: vi.fn(async () =>
-          afterPut
-            ? {
-                id: 'item-final',
-                name: 'uncertain.pdf',
-                size: 3,
-                parentReference: { driveId: 'drive-1', id: 'parent-1' },
-              }
-            : null
-        ),
-      }
-    );
+        {
+          tempRoot,
+          fetchImpl,
+          lookupAll: publicLookup,
+          createUploadSession: vi.fn(async () => ({
+            uploadUrl: 'https://upload.example.test/session',
+          })),
+          readDestination,
+        }
+      )
+    ).rejects.toMatchObject({ code: 'FINAL_CHUNK_RESULT_UNCERTAIN' });
 
-    expect(result.reconciledAfterUncertainFinal).toBe(true);
-    expect(result.id).toBe('item-final');
     expect(uploadPuts).toBe(1);
+    expect(readDestination).toHaveBeenCalledTimes(1);
   });
 
   it('rejects filename shapes that cannot be addressed as one OneDrive child', () => {

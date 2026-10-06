@@ -1,10 +1,6 @@
 import type { LookupAll, OpenAIFileParam } from './openai-file-source.js';
 import { stageOpenAIFile } from './openai-file-source.js';
-import {
-  UploadSessionTransportError,
-  uploadChunksToSession,
-  type FetchLike,
-} from './upload-session-transport.js';
+import { uploadChunksToSession, type FetchLike } from './upload-session-transport.js';
 
 export interface DriveItemReadback {
   id?: string;
@@ -172,56 +168,27 @@ export async function uploadOpenAIFileToDrive(
       );
     }
 
-    try {
-      const uploaded = await uploadChunksToSession({
-        uploadUrl: session.uploadUrl,
-        totalBytes: staged.size,
-        source: staged.open(),
-        fetchImpl: deps.fetchImpl,
-      });
-      const finalId =
-        typeof uploaded.driveItem.id === 'string' ? uploaded.driveItem.id : undefined;
-      const readback = verifyReadback(
-        await deps.readDestination({ driveId, parentItemId, fileName }),
-        { driveId, parentItemId, fileName, size: staged.size, finalItemId: finalId }
-      );
-      return {
-        id: readback.id as string,
-        name: fileName,
-        size: staged.size,
-        driveId,
-        parentItemId,
-        chunksUploaded: uploaded.chunksUploaded,
-        reconciledAfterUncertainFinal: false,
-      };
-    } catch (error) {
-      if (
-        error instanceof UploadSessionTransportError &&
-        error.code === 'FINAL_CHUNK_RESULT_UNCERTAIN'
-      ) {
-        const readback = await deps.readDestination({ driveId, parentItemId, fileName });
-        try {
-          const verified = verifyReadback(readback, {
-            driveId,
-            parentItemId,
-            fileName,
-            size: staged.size,
-          });
-          return {
-            id: verified.id as string,
-            name: fileName,
-            size: staged.size,
-            driveId,
-            parentItemId,
-            chunksUploaded: 0,
-            reconciledAfterUncertainFinal: true,
-          };
-        } catch {
-          throw error;
-        }
-      }
-      throw error;
-    }
+    const uploaded = await uploadChunksToSession({
+      uploadUrl: session.uploadUrl,
+      totalBytes: staged.size,
+      source: staged.open(),
+      fetchImpl: deps.fetchImpl,
+    });
+    const finalId =
+      typeof uploaded.driveItem.id === 'string' ? uploaded.driveItem.id : undefined;
+    const readback = verifyReadback(
+      await deps.readDestination({ driveId, parentItemId, fileName }),
+      { driveId, parentItemId, fileName, size: staged.size, finalItemId: finalId }
+    );
+    return {
+      id: readback.id as string,
+      name: fileName,
+      size: staged.size,
+      driveId,
+      parentItemId,
+      chunksUploaded: uploaded.chunksUploaded,
+      reconciledAfterUncertainFinal: false,
+    };
   } finally {
     await staged.cleanup();
   }
