@@ -33,6 +33,7 @@ const allEndpoints = [...api.endpoints, ...betaApi.endpoints];
 import { z } from 'zod';
 import { readFileSync } from 'fs';
 import { access } from 'fs/promises';
+import { Readable } from 'stream';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { TOOL_CATEGORIES } from './tool-categories.js';
@@ -41,7 +42,8 @@ import { parseTeamsUrl } from './lib/teams-url-parser.js';
 import { buildBM25Index, scoreQuery, tokenize, type BM25Index } from './lib/bm25.js';
 import { deriveTargetResource, type AuditTargetResource } from './audit-target-resource.js';
 import { uploadOpenAIFileToDrive } from './lib/drive-large-upload.js';
-import type { OpenAIFileParam } from './lib/openai-file-source.js';
+import { stageOpenAIFile, type OpenAIFileParam } from './lib/openai-file-source.js';
+import { uploadLargeFileAttachmentToEvent } from './lib/event-attachment-upload.js';
 export interface DiscoverySearchIndex {
   bm25: BM25Index;
   nameTokens: Map<string, Set<string>>;
@@ -844,6 +846,11 @@ interface UtilityTool {
   destructiveHint?: boolean;
   fileParams?: string[];
   openWorldHint?: boolean;
+  // Optional delegated-scope contract for utilities that wrap Graph operations.
+  // Utilities without static scope metadata (for example generic byte readers)
+  // remain runtime-authorized by the Graph resource they access.
+  scopes?: string[] | string[][];
+  workScopes?: string[] | string[][];
   // When true, this tool writes to the server's local filesystem and is only
   // registered in stdio mode, or over HTTP with --http-local-file-tools.
   stdioOnly?: boolean;
@@ -933,10 +940,24 @@ function collectDeniedToolPolicies(options: {
   for (const utility of UTILITY_TOOLS) {
     if (options.readOnly && !utility.readOnlyHint) continue;
     if (options.httpMode && utility.stdioOnly) continue;
+    if (!options.orgMode && !utility.scopes && utility.workScopes) continue;
     if (options.enabledToolsRegex && !options.enabledToolsRegex.test(utility.name)) {
       deniedTools.set(utility.name, {
         toolName: utility.name,
         reason: 'tool_allowlist',
+      });
+      continue;
+    }
+    const missingScopes = getMissingAllowedScopesForGroups(
+      getEndpointScopeGroups(utility, options.orgMode),
+      allowedScopes
+    );
+    if (missingScopes.length > 0) {
+      deniedTools.set(utility.name, {
+        toolName: utility.name,
+        reason: 'allowed_scopes',
+        missingScopes,
+        pathPattern: utility.path,
       });
     }
   }
@@ -1352,6 +1373,259 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             result_bytes: result.size,
           },
         };
+      } catch (error) {
+        const code =
+          error && typeof error === 'object' && 'code' in error
+            ? String((error as { code?: unknown }).code ?? 'UPLOAD_FAILED')
+            : 'UPLOAD_FAILED';
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : String(error),
+                code,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  },
+  {
+    name: 'upload-large-event-attachment',
+    method: 'POST',
+    path: 'tool:upload-large-event-attachment',
+    description:
+      'Upload a 3-150 MiB ChatGPT-provided file to an Outlook event using the event attachment upload-session protocol. This qualified operation accepts only a restImmutableEntryId for an organizer-owned, non-cancelled single appointment with zero attendees, preventing meeting-update fan-out. It performs exact preflight and attachment byte-hash reconciliation.',
+    searchKeywords:
+      'calendar outlook event attachment large file upload resumable immutable appointment',
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    fileParams: ['file'],
+    scopes: ['Calendars.ReadWrite'],
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        file: OPENAI_FILE_PARAM_SCHEMA.describe(
+          'ChatGPT file parameter. ChatGPT supplies download_url and file_id; mime_type and file_name are optional.'
+        ),
+        eventId: z
+          .string()
+          .min(1)
+          .describe('Exact Outlook event restImmutableEntryId. Regular REST ids are refused.'),
+        idKind: z
+          .literal('restImmutableEntryId')
+          .describe('Must be restImmutableEntryId. This prevents accidental regular-id use.'),
+        fileName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Optional attachment name override. Defaults to file.file_name.'),
+        isInline: z.boolean().optional().describe('Whether the attachment is inline. Defaults to false.'),
+        contentId: z.string().min(1).optional().describe('Optional Content-ID for an inline attachment.'),
+        confirm: z
+          .literal(true)
+          .describe('Required explicit confirmation. Must be true before staging or creating an upload session.'),
+      };
+      if (ctx.multiAccount) {
+        schema['account'] = z
+          .string()
+          .optional()
+          .describe(
+            'Account to use when multiple Microsoft accounts are configured. Required when multiple accounts exist (see list-accounts).'
+          );
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      if (params.confirm !== true) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'confirm=true is required before upload-large-event-attachment can modify an event.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const file = params.file as OpenAIFileParam | undefined;
+      const eventId = params.eventId;
+      const idKind = params.idKind;
+      const fileNameOverride = params.fileName;
+      const isInline = params.isInline;
+      const contentId = params.contentId;
+      const accountParam = params.account as string | undefined;
+
+      if (
+        !file ||
+        typeof file.download_url !== 'string' ||
+        typeof file.file_id !== 'string' ||
+        typeof eventId !== 'string' ||
+        idKind !== 'restImmutableEntryId'
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'file, eventId, and idKind=restImmutableEntryId are required.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (fileNameOverride !== undefined && typeof fileNameOverride !== 'string') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'fileName must be a string.' }) }],
+          isError: true,
+        };
+      }
+      if (isInline !== undefined && typeof isInline !== 'boolean') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'isInline must be a boolean.' }) }],
+          isError: true,
+        };
+      }
+      if (contentId !== undefined && typeof contentId !== 'string') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'contentId must be a string.' }) }],
+          isError: true,
+        };
+      }
+
+      try {
+        const accountModeError = await checkAccountParamInBearerMode(accountParam, authManager);
+        if (accountModeError) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: accountModeError }) }],
+            isError: true,
+          };
+        }
+
+        let accountAccessToken: string | undefined;
+        if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+          accountAccessToken = await authManager.getTokenForAccount(accountParam);
+        }
+
+        const staged = await stageOpenAIFile(file);
+        try {
+          const attachmentName = (fileNameOverride ?? staged.fileName ?? '').trim();
+          if (!attachmentName) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    error:
+                      'Attachment name is required. Supply fileName or a ChatGPT file with file_name.',
+                    code: 'INVALID_FILE_NAME',
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const encodedEventId = encodeURIComponent(eventId);
+          const immutableHeaders = { Prefer: 'IdType="ImmutableId"' };
+
+          const graphJson = async (
+            endpoint: string,
+            options: Parameters<GraphClient['graphRequest']>[1] = {}
+          ): Promise<Record<string, unknown>> => {
+            const response = (await graphClient.graphRequest(endpoint, {
+              ...options,
+              accessToken: accountAccessToken,
+              forceJsonOutput: true,
+            })) as CallToolResult;
+            return parseGraphUtilityJson(response, endpoint);
+          };
+
+          const result = await uploadLargeFileAttachmentToEvent(
+            {
+              eventId,
+              idKind: 'restImmutableEntryId',
+              source: {
+                name: attachmentName,
+                size: staged.size,
+                open: staged.open,
+              },
+              ...(isInline === true ? { isInline: true } : {}),
+              ...(contentId ? { contentId } : {}),
+            },
+            {
+              readEvent: async () =>
+                (await graphJson(
+                  `/me/events/${encodedEventId}?$select=id,type,isCancelled,isOrganizer,attendees,changeKey,lastModifiedDateTime`,
+                  { headers: immutableHeaders }
+                )) as import('./lib/event-attachment-upload.js').EventAttachmentEventSnapshot,
+              listAttachments: async () => {
+                const response = await graphJson(
+                  `/me/events/${encodedEventId}/attachments?$select=id,name,isInline,contentId,size`,
+                  { headers: immutableHeaders }
+                );
+                return Array.isArray(response.value)
+                  ? (response.value as import('./lib/event-attachment-upload.js').EventAttachmentSnapshot[])
+                  : [];
+              },
+              createUploadSession: async ({ name, size, isInline: inline, contentId: cid }) => {
+                const response = await graphJson(
+                  `/me/events/${encodedEventId}/attachments/createUploadSession`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      ...immutableHeaders,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      AttachmentItem: {
+                        attachmentType: 'file',
+                        name,
+                        size,
+                        isInline: inline,
+                        ...(cid ? { contentId: cid } : {}),
+                      },
+                    }),
+                  }
+                );
+                return { uploadUrl: String(response.uploadUrl ?? '') };
+              },
+              readAttachmentBytes: async (_eventId, attachmentId) => {
+                const downloaded = await graphClient.downloadStream(
+                  `/me/events/${encodedEventId}/attachments/${encodeURIComponent(
+                    attachmentId
+                  )}/$value`,
+                  {
+                    accessToken: accountAccessToken,
+                    headers: immutableHeaders,
+                  }
+                );
+                return Readable.fromWeb(
+                  downloaded.body as unknown as import('stream/web').ReadableStream<Uint8Array>
+                ) as AsyncIterable<Uint8Array>;
+              },
+            }
+          );
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            _meta: {
+              result_count: 1,
+              result_bytes: result.sourceBytes,
+            },
+          };
+        } finally {
+          await staged.cleanup();
+        }
       } catch (error) {
         const code =
           error && typeof error === 'object' && 'code' in error
@@ -2972,7 +3246,19 @@ export function registerGraphTools(
   for (const utility of UTILITY_TOOLS) {
     if (readOnly && !utility.readOnlyHint) continue;
     if (httpMode && utility.stdioOnly) continue;
+    if (!orgMode && !utility.scopes && utility.workScopes) continue;
     if (enabledToolsRegex && !enabledToolsRegex.test(utility.name)) continue;
+    const missingUtilityScopes = getMissingAllowedScopesForGroups(
+      getEndpointScopeGroups(utility, orgMode),
+      allowedScopes
+    );
+    if (missingUtilityScopes.length > 0) {
+      logger.info(
+        `Skipping utility ${utility.name} - missing allowed scopes: ${missingUtilityScopes.join(', ')}`
+      );
+      skippedCount++;
+      continue;
+    }
     try {
       registerUtilityToolWithMcp(server, utility, utilityCtx);
       registeredCount++;
@@ -3164,6 +3450,7 @@ export function registerDiscoveryTools(
   }
 
   const disabledByAllowedScopes: Array<{ toolName: string; missingScopes: string[] }> = [];
+  const allowedUtilityScopes = parseAllowedScopes(allowedScopesValue);
   const deniedTools = collectDeniedToolPolicies({
     readOnly,
     orgMode,
@@ -3186,8 +3473,14 @@ export function registerDiscoveryTools(
   const utilityTools = UTILITY_TOOLS.filter((u) => {
     if (readOnly && !u.readOnlyHint) return false;
     if (httpMode && u.stdioOnly) return false;
+    if (!orgMode && !u.scopes && u.workScopes) return false;
     if (enabledToolsRegex && !enabledToolsRegex.test(u.name)) return false;
-    return true;
+    return (
+      getMissingAllowedScopesForGroups(
+        getEndpointScopeGroups(u, orgMode),
+        allowedUtilityScopes
+      ).length === 0
+    );
   });
   const searchIndex = buildDiscoverySearchIndex(toolsRegistry, utilityTools);
   const totalCount = toolsRegistry.size + utilityTools.length;
