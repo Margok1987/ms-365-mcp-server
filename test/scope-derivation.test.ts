@@ -41,15 +41,13 @@ describe('buildScopesFromEndpoints', () => {
     });
 
     it('derives Calendars.ReadWrite when only the event attachment utility is enabled', () => {
-      expect(
-        buildScopesFromEndpoints(false, '^upload-large-event-attachment$', false)
-      ).toContain('Calendars.ReadWrite');
+      expect(buildScopesFromEndpoints(false, '^upload-large-event-attachment$', false)).toContain(
+        'Calendars.ReadWrite'
+      );
     });
 
     it('does not derive the write utility scope in read-only mode', () => {
-      expect(
-        buildScopesFromEndpoints(false, '^upload-large-event-attachment$', true)
-      ).toEqual([]);
+      expect(buildScopesFromEndpoints(false, '^upload-large-event-attachment$', true)).toEqual([]);
     });
   });
 
@@ -150,7 +148,10 @@ describe('allowed scope helpers', () => {
     });
 
     it('appends extra scopes to the tool-derived scopes', () => {
-      const base = resolveAuthScopes({ enabledTools: 'list-mail-messages', readOnly: true });
+      const base = resolveAuthScopes({
+        enabledTools: 'list-mail-messages',
+        readOnly: true,
+      });
       const withExtra = resolveAuthScopes({
         enabledTools: 'list-mail-messages',
         readOnly: true,
