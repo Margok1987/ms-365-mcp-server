@@ -58,9 +58,9 @@ describe('Tool Filtering', () => {
     registerGraphTools(server, graphClient, false);
 
     // 5 mocked graph endpoints plus the two host-file write utilities via registerTool;
-    // legacy utilities remain on tool().
+    // five legacy utilities remain on tool().
     expect(registerToolSpy).toHaveBeenCalledTimes(7);
-    expect(toolSpy).toHaveBeenCalledTimes(4);
+    expect(toolSpy).toHaveBeenCalledTimes(5);
     expect(registerToolSpy).toHaveBeenCalledWith(
       'list-mail-messages',
       expect.any(Object),
@@ -123,9 +123,9 @@ describe('Tool Filtering', () => {
   it('should handle invalid regex patterns gracefully', () => {
     registerGraphTools(server, graphClient, false, '[invalid regex');
 
-    // 5 mocked endpoints plus the two host-file write utilities; invalid regex applies no filter.
+    // 5 mocked endpoints plus the two host-file write utilities; invalid regex applies no filter. Five legacy utilities remain on tool().
     expect(registerToolSpy).toHaveBeenCalledTimes(7);
-    expect(toolSpy).toHaveBeenCalledTimes(4);
+    expect(toolSpy).toHaveBeenCalledTimes(5);
   });
 
   it('should combine read-only and filtering correctly', () => {
