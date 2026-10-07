@@ -49,6 +49,10 @@ export const UTILITY_SCOPE_CONFIGS: Record<string, UtilityScopeConfig> = {
     method: 'POST',
     scopes: ['Calendars.ReadWrite'],
   },
+  'create-calendar-event-subscription': {
+    method: 'POST',
+    scopes: ['Calendars.Read'],
+  },
 };
 
 const __filename = fileURLToPath(import.meta.url);

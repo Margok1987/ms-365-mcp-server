@@ -1395,6 +1395,212 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     },
   },
   {
+    name: 'create-calendar-event-subscription',
+    method: 'POST',
+    path: 'tool:create-calendar-event-subscription',
+    description:
+      'Create a basic Microsoft Graph change-notification subscription for all events in the connected mailbox. The resource and change types are fixed, clientState is required, both callback URLs must be HTTPS, and the request always uses Prefer: IdType="ImmutableId" so event ids in notifications follow the Calendar immutable-identity contract.',
+    searchKeywords:
+      'calendar event webhook subscription notifications immutable id lifecycle callback',
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    scopes: UTILITY_SCOPE_CONFIGS['create-calendar-event-subscription'].scopes,
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        notificationUrl: z
+          .string()
+          .min(1)
+          .describe('Public HTTPS webhook URL for Calendar event change notifications.'),
+        lifecycleNotificationUrl: z
+          .string()
+          .min(1)
+          .describe('Public HTTPS webhook URL for subscription lifecycle notifications. May be the same URL.'),
+        expirationDateTime: z
+          .string()
+          .min(1)
+          .describe('Future ISO 8601 expirationDateTime accepted by Microsoft Graph for Outlook event subscriptions.'),
+        clientState: z
+          .string()
+          .min(1)
+          .max(128)
+          .describe('Opaque secret, maximum 128 characters. Returned notifications must match it exactly.'),
+        confirm: z
+          .literal(true)
+          .describe('Required explicit confirmation before the external webhook subscription is created.'),
+      };
+      if (ctx.multiAccount) {
+        schema['account'] = z
+          .string()
+          .optional()
+          .describe(
+            'Account to use when multiple Microsoft accounts are configured. Required when multiple accounts exist (see list-accounts).'
+          );
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      if (params.confirm !== true) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'confirm=true is required before creating a Calendar event subscription.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const notificationUrl = params.notificationUrl;
+      const lifecycleNotificationUrl = params.lifecycleNotificationUrl;
+      const expirationDateTime = params.expirationDateTime;
+      const clientState = params.clientState;
+      const accountParam = params.account as string | undefined;
+
+      const validatedHttpsUrl = (value: unknown, field: string): string | null => {
+        if (typeof value !== 'string' || value.length === 0 || value.length > 4096) return null;
+        try {
+          const url = new URL(value);
+          if (url.protocol !== 'https:' || url.username || url.password) return null;
+          return url.toString();
+        } catch {
+          return null;
+        }
+      };
+
+      const notification = validatedHttpsUrl(notificationUrl, 'notificationUrl');
+      const lifecycle = validatedHttpsUrl(lifecycleNotificationUrl, 'lifecycleNotificationUrl');
+      if (!notification || !lifecycle) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'notificationUrl and lifecycleNotificationUrl must be valid public-style HTTPS URLs without URL credentials.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (
+        typeof clientState !== 'string' ||
+        clientState.length < 1 ||
+        clientState.length > 128 ||
+        clientState.includes('\0')
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'clientState must be a non-empty opaque string of at most 128 characters.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (
+        typeof expirationDateTime !== 'string' ||
+        !Number.isFinite(Date.parse(expirationDateTime)) ||
+        Date.parse(expirationDateTime) <= Date.now()
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'expirationDateTime must be a valid future ISO 8601 timestamp.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const accountModeError = await checkAccountParamInBearerMode(accountParam, authManager);
+        if (accountModeError) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: accountModeError }) }],
+            isError: true,
+          };
+        }
+
+        let accountAccessToken: string | undefined;
+        if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+          accountAccessToken = await authManager.getTokenForAccount(accountParam);
+        }
+
+        // Use makeRequest rather than graphRequest: graphRequest logs its options,
+        // including request bodies. clientState is an authentication secret for the
+        // webhook and must never be copied into server logs.
+        const raw = await graphClient.makeRequest('/subscriptions', {
+          method: 'POST',
+          accessToken: accountAccessToken,
+          headers: {
+            'Content-Type': 'application/json',
+            Prefer: 'IdType="ImmutableId"',
+          },
+          body: JSON.stringify({
+            changeType: 'created,updated,deleted',
+            notificationUrl: notification,
+            lifecycleNotificationUrl: lifecycle,
+            resource: '/me/events',
+            expirationDateTime,
+            clientState,
+            latestSupportedTlsVersion: 'v1_2',
+          }),
+        });
+
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new Error('Subscription creation returned a non-object response.');
+        }
+        const subscription = raw as Record<string, unknown>;
+        if (typeof subscription.id !== 'string' || subscription.id.length === 0) {
+          throw new Error('Subscription creation returned no subscription id.');
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                id: subscription.id,
+                resource: subscription.resource,
+                changeType: subscription.changeType,
+                expirationDateTime: subscription.expirationDateTime,
+                notificationUrl: subscription.notificationUrl,
+                lifecycleNotificationUrl: subscription.lifecycleNotificationUrl,
+                immutableEventIdsRequested: true,
+              }),
+            },
+          ],
+          _meta: { result_count: 1 },
+        };
+      } catch (error) {
+        const metadata = thrownErrorAuditFields(error);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            },
+          ],
+          isError: true,
+          ...(Object.keys(metadata).length > 0 ? { _meta: metadata } : {}),
+        };
+      }
+    },
+  },
+  {
     name: 'upload-large-event-attachment',
     method: 'POST',
     path: 'tool:upload-large-event-attachment',
