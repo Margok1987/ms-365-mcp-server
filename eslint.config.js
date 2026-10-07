@@ -31,6 +31,14 @@ export default [
     },
   },
   {
+    // TypeScript resolves identifier/type names itself. Core no-undef does not understand
+    // type-only globals such as RequestInit and produces false positives in valid TS.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-undef': 'off',
+    },
+  },
+  {
     ignores: [
       'node_modules/**',
       'dist/**',
