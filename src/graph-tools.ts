@@ -1387,7 +1387,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           .describe(
             'Relative Microsoft Graph path starting with "/". Common paths: ' +
               '/drives/{drive-id}/items/{driveItem-id}/content (drive file content); ' +
-              '/me/messages/{message-id}/attachments/{attachment-id}/$value (mail attachment, list-mail-attachments returns the IDs); ' +
+              '/me/messages/{message-id}/attachments/{attachment-id}/$value (mail attachment, list-mail-attachments returns the IDs); /me/events/{event-id}/attachments/{attachment-id}/$value (event attachment, list-event-attachments returns the IDs); ' +
               '/me/photo/$value or /users/{user-id}/photo/$value (profile photo); ' +
               '/chats/{chat-id}/messages/{chatMessage-id}/hostedContents/{chatMessageHostedContent-id}/$value (Teams chat hosted content, list-chat-message-hosted-contents returns the IDs); ' +
               '/teams/{team-id}/channels/{channel-id}/messages/{chatMessage-id}/hostedContents/{chatMessageHostedContent-id}/$value (Teams channel hosted content). ' +
