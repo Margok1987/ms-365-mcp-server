@@ -22,6 +22,7 @@ import AuthManager, {
   getEndpointScopeGroups,
   getMissingAllowedScopesForGroups,
   parseAllowedScopes,
+  UTILITY_SCOPE_CONFIGS,
 } from './auth.js';
 import { api } from './generated/client.js';
 import { api as betaApi } from './generated/client-beta.js';
@@ -1405,7 +1406,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     destructiveHint: false,
     openWorldHint: true,
     fileParams: ['file'],
-    scopes: ['Calendars.ReadWrite'],
+    scopes: UTILITY_SCOPE_CONFIGS['upload-large-event-attachment'].scopes,
     buildSchema: (ctx) => {
       const schema: Record<string, z.ZodTypeAny> = {
         file: OPENAI_FILE_PARAM_SCHEMA.describe(
