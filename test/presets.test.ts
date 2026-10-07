@@ -162,18 +162,6 @@ describe('utility tools in presets', () => {
     expect(inPreset('mail', 'get-download-url')).toBe(false);
   });
 
-  it('large event attachment upload stays scoped to calendar/outlook/personal', () => {
-    for (const preset of ['calendar', 'outlook', 'personal']) {
-      expect(
-        inPreset(preset, 'upload-large-event-attachment'),
-        `upload-large-event-attachment missing from ${preset}`
-      ).toBe(true);
-    }
-    expect(inPreset('mail', 'upload-large-event-attachment')).toBe(false);
-    expect(inPreset('files', 'upload-large-event-attachment')).toBe(false);
-    expect(inPreset('teams', 'upload-large-event-attachment')).toBe(false);
-  });
-
   it('parse-teams-url stays scoped to teams/work', () => {
     expect(inPreset('teams', 'parse-teams-url')).toBe(true);
     expect(inPreset('mail', 'parse-teams-url')).toBe(false);

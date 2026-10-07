@@ -37,20 +37,6 @@ interface EndpointConfig {
   presets?: string[]; // Presets this endpoint belongs to (mail, outlook, personal, ...)
 }
 
-interface UtilityScopeConfig {
-  method: string;
-  scopes?: string[] | string[][];
-  workScopes?: string[] | string[][];
-  readOnly?: boolean;
-}
-
-export const UTILITY_SCOPE_CONFIGS: Record<string, UtilityScopeConfig> = {
-  'upload-large-event-attachment': {
-    method: 'POST',
-    scopes: ['Calendars.ReadWrite'],
-  },
-};
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const endpointsData = JSON.parse(
@@ -491,21 +477,6 @@ function buildScopesFromEndpoints(
     );
   });
 
-  for (const [toolName, utility] of Object.entries(UTILITY_SCOPE_CONFIGS)) {
-    if (readOnly && !utility.readOnly) {
-      continue;
-    }
-    if (enabledToolsRegex && !enabledToolsRegex.test(toolName)) {
-      continue;
-    }
-    if (!includeWorkAccountScopes && !utility.scopes && utility.workScopes) {
-      continue;
-    }
-    getEndpointLoginScopes(utility, includeWorkAccountScopes).forEach((scope) =>
-      scopesSet.add(scope)
-    );
-  }
-
   const scopes = collapseRedundantScopes(Array.from(scopesSet));
   if (enabledToolsPattern) {
     logger.info(`Built ${scopes.length} scopes for filtered tools: ${scopes.join(', ')}`);
@@ -640,38 +611,6 @@ function buildAllowedScopeDiagnostics(options: AllowedScopeOptions = {}): ScopeD
     // primary group. For an OR-group endpoint enabled via a non-primary alternative, requesting
     // the primary group would both leak scopes outside the allowlist and omit the scope the
     // tool was enabled for. Without an allowlist this is the primary group, unchanged.
-    getEndpointEffectiveLoginScopes(scopeGroups, allowedScopes).forEach((scope) =>
-      effectiveToolScopes.add(scope)
-    );
-    allScopes.forEach((scope) => effectiveToolScopesAllGroups.add(scope));
-  }
-
-  for (const [toolName, utility] of Object.entries(UTILITY_SCOPE_CONFIGS)) {
-    if (Boolean(options.readOnly) && !utility.readOnly) {
-      continue;
-    }
-    if (enabledToolsRegex && !enabledToolsRegex.test(toolName)) {
-      continue;
-    }
-    if (!options.orgMode && !utility.scopes && utility.workScopes) {
-      continue;
-    }
-
-    const scopeGroups = getEndpointScopeGroups(utility, Boolean(options.orgMode));
-    const loginScopes = getEndpointLoginScopes(utility, Boolean(options.orgMode));
-    const allScopes = getEndpointRequiredScopes(utility, Boolean(options.orgMode));
-    loginScopes.forEach((scope) => normalToolScopes.add(scope));
-
-    const missingScopes = getMissingAllowedScopesForGroups(scopeGroups, allowedScopes);
-    if (missingScopes.length > 0) {
-      disabledTools.push({
-        toolName,
-        requiredScopes: allScopes.sort((a, b) => a.localeCompare(b)),
-        missingScopes: missingScopes.sort((a, b) => a.localeCompare(b)),
-      });
-      continue;
-    }
-
     getEndpointEffectiveLoginScopes(scopeGroups, allowedScopes).forEach((scope) =>
       effectiveToolScopes.add(scope)
     );

@@ -138,16 +138,18 @@ describe('Calendar View Tools', () => {
     it('should include fetchAllPages parameter for GET tools', () => {
       registerGraphTools(mockServer, mockGraphClient, false);
 
-      for (const toolName of [
-        'get-calendar-view',
-        'get-specific-calendar-view',
-        'list-calendar-event-instances',
-      ]) {
-        const call = mockServer.registerTool.mock.calls.find(
-          (candidate: unknown[]) => candidate[0] === toolName
-        );
-        expect(call, `${toolName} should be registered`).toBeDefined();
-        const paramSchema = (call![1] as { inputSchema: z.AnyZodObject }).inputSchema
+      for (const call of mockServer.registerTool.mock.calls) {
+        const toolName = call[0] as string;
+        // Skip utilities and read-only POST query tools that are not GET Graph endpoints.
+        if (
+          toolName === 'parse-teams-url' ||
+          toolName === 'download-bytes' ||
+          toolName === 'copilot-retrieve' ||
+          toolName === 'get-download-url' ||
+          toolName === 'upload-drive-file'
+        )
+          continue;
+        const paramSchema = (call[1] as { inputSchema: z.AnyZodObject }).inputSchema
           .shape as Record<string, z.ZodTypeAny>;
         expect(paramSchema).toHaveProperty('fetchAllPages');
       }

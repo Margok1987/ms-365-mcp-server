@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildAllowedScopeDiagnostics,
   buildScopesFromEndpoints,
   collapseScopeHierarchy,
   parseAllowedScopes,
@@ -38,16 +37,6 @@ describe('buildScopesFromEndpoints', () => {
 
     it('returns an empty array when no tools match the pattern', () => {
       expect(buildScopesFromEndpoints(true, 'no-such-tool-xyzzy', false)).toEqual([]);
-    });
-
-    it('derives Calendars.ReadWrite when only the event attachment utility is enabled', () => {
-      expect(buildScopesFromEndpoints(false, '^upload-large-event-attachment$', false)).toContain(
-        'Calendars.ReadWrite'
-      );
-    });
-
-    it('does not derive the write utility scope in read-only mode', () => {
-      expect(buildScopesFromEndpoints(false, '^upload-large-event-attachment$', true)).toEqual([]);
     });
   });
 
@@ -111,22 +100,6 @@ describe('allowed scope helpers', () => {
       expect([...resolved].sort()).toEqual([...derived].sort());
     });
 
-    it('reports the event attachment utility as disabled when its scope is not allowed', () => {
-      const diagnostics = buildAllowedScopeDiagnostics({
-        enabledTools: '^upload-large-event-attachment$',
-        allowedScopes: 'Mail.Read',
-      });
-      expect(diagnostics.effectivePermissions).toEqual([]);
-      expect(diagnostics.disabledTools).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            toolName: 'upload-large-event-attachment',
-            missingScopes: ['Calendars.ReadWrite'],
-          }),
-        ])
-      );
-    });
-
     it('filters tool-derived scopes when allowed scopes are supplied', () => {
       expect(
         resolveAuthScopes({
@@ -148,10 +121,7 @@ describe('allowed scope helpers', () => {
     });
 
     it('appends extra scopes to the tool-derived scopes', () => {
-      const base = resolveAuthScopes({
-        enabledTools: 'list-mail-messages',
-        readOnly: true,
-      });
+      const base = resolveAuthScopes({ enabledTools: 'list-mail-messages', readOnly: true });
       const withExtra = resolveAuthScopes({
         enabledTools: 'list-mail-messages',
         readOnly: true,
