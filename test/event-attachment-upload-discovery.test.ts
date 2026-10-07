@@ -51,9 +51,9 @@ describe('large event attachment discovery contract', () => {
       category: 'calendar',
       limit: 20,
     });
-    expect(textJson(result).tools.some((tool: any) => tool.name === 'upload-large-event-attachment')).toBe(
-      true
-    );
+    expect(
+      textJson(result).tools.some((tool: any) => tool.name === 'upload-large-event-attachment')
+    ).toBe(true);
   });
 
   it('publishes immutable-id and host-file schema requirements', async () => {
@@ -130,8 +130,8 @@ describe('large event attachment discovery contract', () => {
       category: 'calendar',
       limit: 20,
     });
-    expect(textJson(result).tools.some((tool: any) => tool.name === 'upload-large-event-attachment')).toBe(
-      false
-    );
+    expect(
+      textJson(result).tools.some((tool: any) => tool.name === 'upload-large-event-attachment')
+    ).toBe(false);
   });
 });
