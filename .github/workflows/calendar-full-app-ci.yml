@@ -6,7 +6,7 @@ on:
       - calendar-full-app-20261007
 
 jobs:
-  verify:
+  verify-calendar-candidate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,4 +17,16 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run verify
+      - name: Generate current Graph client
+        run: npm run generate
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Tests
+        run: npm run test
+      - name: Record repository format baseline
+        continue-on-error: true
+        run: npm run format:check
