@@ -4812,7 +4812,8 @@
     "scopes": [
       "Calendars.ReadWrite"
     ],
-    "llmTip": "IRREVERSIBLE mailbox operation. Permanently removes the calendar folder and its contained events. Use only for a synthetic non-default calendar after an exact destructive-operation gate."
+    "llmTip": "IRREVERSIBLE mailbox operation. Permanently removes the calendar folder and its contained events. Use only for a synthetic non-default calendar after an exact destructive-operation gate.",
+    "descriptionOverride": "Permanently delete an Outlook calendar folder and its contained events."
   },
   {
     "pathPattern": "/me/translateExchangeIds",
@@ -4880,7 +4881,8 @@
     "scopes": [
       "Calendars.ReadWrite"
     ],
-    "llmTip": "IRREVERSIBLE mailbox operation. Permanently deletes an event into the purges area; clients cannot recover it. Synthetic fixtures only."
+    "llmTip": "IRREVERSIBLE mailbox operation. Permanently deletes an event into the purges area; clients cannot recover it. Synthetic fixtures only.",
+    "descriptionOverride": "Permanently delete an Outlook calendar event from the mailbox."
   },
   {
     "pathPattern": "/me/calendarGroups",
