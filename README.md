@@ -997,24 +997,6 @@ Markers may contain markup (e.g. a coloured `<span>`) as long as it renders visi
 
 ## Production Deployment
 
-### Bound Mail composition boundary
-
-`MS365_MCP_REQUIRE_BOUND_MAIL_COMPOSE=1` enables a runtime-owned public dispatch
-boundary at the Graph client's outbound request point. It rejects raw Mail
-draft creation, reply/forward creation and immediate send actions, free body or
-recipient updates, and Mail child mutations, including their Graph batch,
-shared-user and encoded-path equivalents. Closed message metadata updates and
-reads remain available. An invalid explicit setting fails closed; without the
-setting, upstream behavior is preserved.
-
-Caller fields such as `confirm`, `internal`, signature claims or tool aliases
-cannot authorize a bypass. This source feature is not a complete composer or a
-runtime qualification. Enable it for a productive instance only together with
-its separately qualified deterministic composition/recovery binding. There is
-currently no public exception or private composer implementation in this
-feature; enabling it by itself deliberately blocks composition and Mail child
-writes. Send authorization remains a separate consumer policy and operation.
-
 See [docs/deployment.md](docs/deployment.md) for a full guide to hosting the server for organization-wide access, including Docker, Azure Container Apps, Azure App Service, Azure AD app registration, reverse proxy setup, client configuration, and exposed endpoints.
 
 ## Contributing
