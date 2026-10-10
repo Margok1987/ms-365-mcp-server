@@ -11,6 +11,7 @@ import {
 } from './lib/graph-resilience.js';
 import { applyBatchContentType } from './lib/batch-content-type.js';
 import { applyMessageSignoffToRequest } from './lib/message-signoff.js';
+import { assertMailSendProofBoundary } from './lib/mail-send-approval-boundary.js';
 import { assertPublicMailComposeBoundary } from './lib/mail-compose-boundary.js';
 import { TRANSPORT_OK_MESSAGE } from './lib/select-projection.js';
 import { open, stat, unlink } from 'fs/promises';
@@ -508,6 +509,9 @@ class GraphClient {
     logger.info(`[GRAPH CLIENT] Final URL being sent to Microsoft: ${url}`);
 
     const method = options.method || 'GET';
+    // Independent opt-in deny-until-approved gate for all named Send tools and $batch.
+    // Never treat a model-supplied confirm/approval flag as trusted authorization.
+    assertMailSendProofBoundary(method, endpoint, options.body, options.headers);
     assertPublicMailComposeBoundary(method, endpoint, options.body, options.headers);
     // Signoff gate sits at the outbound chokepoint, keyed on method + path, so
     // every route to a message write - tool aliases, PATCH edits and $batch
