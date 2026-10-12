@@ -556,7 +556,7 @@ class MicrosoftGraphServer {
       );
 
       // Large Graph fileAttachment bodies are Base64 JSON; keep other HTTP routes at 100 KB.
-      app.use('/mcp', express.json({ limit: '5mb' }));
+      app.use('/mcp', express.json({ limit: '30mb' }));
       app.use(express.json());
       app.use(express.urlencoded({ extended: true }));
 
