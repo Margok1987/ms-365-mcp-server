@@ -659,6 +659,7 @@ Environment variables:
 - `MS365_MCP_ATTACHMENT_PORT=<port>`: Serve the attachment route on its own listener on this port (alternative to --attachment-port; requires `--enable-attachment-urls`)
 - `MS365_MCP_ATTACHMENT_HOST=<host>`: Interface the `MS365_MCP_ATTACHMENT_PORT` listener binds (alternative to --attachment-host; requires `--attachment-port`). Defaults to the host `--http` bound — which for a wildcard `--http` means both ports answer everywhere and the port split isolates nothing. See "Splitting the attachment listener"
 - `MS365_MCP_HTTP_LOCAL_FILE_TOOLS=true|1`: Register download-bytes-to-file over HTTP (alternative to --http-local-file-tools; same restrictions)
+- `MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH=true`: Opt in to the experimental server-side `attach-drive-pdf-to-mail-draft` utility. **Default: disabled.** Source availability is not a qualification, deployment or consumer release. The utility never sends mail.
 - `MS365_MCP_CLOUD_TYPE=global|china`: Microsoft cloud environment (alternative to --cloud flag)
 - `LOG_LEVEL`: Set logging level (default: 'info')
 - `SILENT=true|1`: Disable console output
@@ -673,6 +674,57 @@ Environment variables:
 - `MS365_MCP_AUTH_CACHE_COMMAND_TIMEOUT_MS`: Per-invocation timeout for `MS365_MCP_AUTH_CACHE_COMMAND` (default: `10000`)
 - `MS365_MCP_EXPECTED_USERNAME`: Require local MSAL auth to use this Microsoft account username (case-insensitive; CLI flag takes precedence)
 - `MS365_MCP_EXPECTED_HOME_ACCOUNT_ID`: Require local MSAL auth to use this exact MSAL homeAccountId (CLI flag takes precedence)
+
+## Server-side OneDrive PDF attachment to an unsent Outlook draft (opt-in)
+
+The \`attach-drive-pdf-to-mail-draft\` utility is a separate, explicitly opt-in
+provider capability. When the operator sets
+\`MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH=true\`, discovery and the direct MCP
+tool catalog can expose it. The default process remains unchanged, and an
+operator's opt-in does **not** by itself admit an unqualified tool to a
+ChatGPT technical release or consumer binding.
+
+The caller supplies \`driveId\`, \`driveItemId\`, immutable \`messageId\`,
+\`expectedParentFolderId\`, \`expectedChangeKey\`,
+\`expectedSourceETag\` and \`confirm: true\`. No PDF bytes, arbitrary URL,
+SMTP recipients, alternate account or body rewrite is accepted as a parameter.
+The utility uses the currently authenticated Graph account to retrieve one
+existing OneDrive PDF and attach it as a *real* fileAttachment to one existing
+unsent \`/me\` draft. The source bytes never appear in the model-visible tool
+arguments or successful result. Microsoft Graph still uses its normal under-3-MB
+fileAttachment POST; the 3-MB upload-session API and referenceAttachment links
+are not substitutes.
+
+Before appending once, the server verifies source drive/item ID, original
+filename, \`application/pdf\`, a valid PDF signature, 15–2,000,000 decoded
+bytes, source eTag, draft ID/folder/changeKey, \`isDraft=true\`, current actor
+and every existing attachment. It refuses an incomplete attachment page,
+existing same-name child, more than 12 prior attachments, or prior binary
+resources larger than 3 MB. Actual bytes of all pre-existing children, including
+CID-inline signature resources, are SHA-256-frozen for later comparison.
+Source content is read with its known eTag as an \`If-Match\` precondition.
+The message ID preference is requested as \`IdType="ImmutableId"\` and checked
+against the actual parent and returned child. The source, actor, attachment
+inventory and current draft are checked again immediately before writing.
+
+After the one provider POST, the server checks its 201 receipt, independently
+reads the same draft and attachment collection, checks the exact new PDF bytes
+and verifies all prior attachment bytes and draft composition remain unchanged.
+Its result contains only IDs, file name, original byte size, SHA-256,
+retained-child count and \`sent:false\`. This is a
+*read-then-write* guard, **not** a provider-atomic \`If-Match\` for the
+attachment POST itself. Any uncertain POST or failed post-write verification
+returns a possible-write/no-replay error; no automatic retry, deletion,
+send, permission change or replacement is made.
+
+Implementation:
+[drive-pdf-mail-attachment.ts](src/lib/drive-pdf-mail-attachment.ts);
+regression tests:
+[drive-pdf-mail-attachment.test.ts](src/lib/drive-pdf-mail-attachment.test.ts).
+Run the source/typecheck/tests/build verification workflow before enabling this
+capability. A real authenticated, synthetic recipientless QA readback, negative
+error/recovery cases, cold/warm Q8 and the separate technical release plus
+consumer approval are still required before production business use.
 
 ## Server-Minted Attachment URLs
 
