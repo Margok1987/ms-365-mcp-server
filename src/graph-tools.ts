@@ -1681,13 +1681,20 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
               true
             ),
           createUploadSession: async (filename) => {
-            const created = await readJson(
-              destinationPath(filename) + ':/createUploadSession'
-            ).catch(async () => {
-              // Deliberately do not issue a second POST on any uncertain response.
-              throw new MailAttachmentToDriveError('UPLOAD_SESSION_NOT_CREATED');
-            });
-            return { uploadUrl: String(created.uploadUrl ?? '') };
+            const created = await graphJson(
+              destinationPath(filename) + ':/createUploadSession',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  item: {
+                    '@microsoft.graph.conflictBehavior': 'fail',
+                    name: filename,
+                  },
+                }),
+              }
+            );
+            return { uploadUrl: String(created?.uploadUrl ?? '') };
           },
           uploadSession: async (uploadUrl, bytes) => {
             async function* source() {
