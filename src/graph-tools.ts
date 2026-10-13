@@ -41,6 +41,11 @@ import { parseTeamsUrl } from './lib/teams-url-parser.js';
 import { buildBM25Index, scoreQuery, tokenize, type BM25Index } from './lib/bm25.js';
 import { deriveTargetResource, type AuditTargetResource } from './audit-target-resource.js';
 import { uploadOpenAIFileToDrive } from './lib/drive-large-upload.js';
+import {
+  attachDrivePdfToMailDraft,
+  DrivePdfDraftError,
+  type DrivePdfDraftInput,
+} from './lib/drive-pdf-mail-attachment.js';
 import type { OpenAIFileParam } from './lib/openai-file-source.js';
 export interface DiscoverySearchIndex {
   bm25: BM25Index;
@@ -847,6 +852,12 @@ interface UtilityTool {
   // When true, this tool writes to the server's local filesystem and is only
   // registered in stdio mode, or over HTTP with --http-local-file-tools.
   stdioOnly?: boolean;
+  // Not exposed unless the provider Operator explicitly activates the new surface.
+  enableEnv?: string;
+}
+
+function utilityEnabled(utility: UtilityTool): boolean {
+  return !utility.enableEnv || process.env[utility.enableEnv] === 'true';
 }
 
 interface DisabledToolScope {
@@ -931,6 +942,7 @@ function collectDeniedToolPolicies(options: {
   }
 
   for (const utility of UTILITY_TOOLS) {
+    if (!utilityEnabled(utility)) continue;
     if (options.readOnly && !utility.readOnlyHint) continue;
     if (options.httpMode && utility.stdioOnly) continue;
     if (options.enabledToolsRegex && !options.enabledToolsRegex.test(utility.name)) {
@@ -1367,6 +1379,142 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
               }),
             },
           ],
+          isError: true,
+        };
+      }
+    },
+  },
+  {
+    name: 'attach-drive-pdf-to-mail-draft',
+    method: 'POST',
+    path: 'tool:attach-drive-pdf-to-mail-draft',
+    description:
+      'Attach exactly one existing OneDrive PDF as a real unsent Outlook draft file. The server reads original binary bytes without a model-facing Base64 argument. Fail-closed immutable-parent/current-revision checks and exact byte readback; never sends email or retries an uncertain POST. Disabled until explicitly activated and qualified.',
+    searchKeywords:
+      'onedrive PDF file attach existing outlook mail draft server side original binary content no base64',
+    enableEnv: 'MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH',
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        driveId: z.string().min(1).describe('Exact OneDrive/SharePoint drive ID.'),
+        driveItemId: z.string().min(1).describe('Existing PDF driveItem ID; never a URL.'),
+        messageId: z.string().min(1).describe('Existing immutable ID of one unsent /me draft.'),
+        expectedParentFolderId: z.string().min(1).describe('Current native draft parent folder ID.'),
+        expectedChangeKey: z.string().min(1).describe('Fresh current draft changeKey.'),
+        expectedSourceETag: z.string().min(1).describe('Fresh original PDF driveItem eTag.'),
+        confirm: z.literal(true).describe('Explicit authorization for one draft-only file attachment.'),
+      };
+      if (ctx.multiAccount) {
+        schema.account = z.string().optional().describe(
+          'Current selected account, never a switch from an OAuth/bearer principal.'
+        );
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      if (params.confirm !== true) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'CONFIRM_REQUIRED' }) }],
+          isError: true,
+        };
+      }
+      const input = {
+        driveId: params.driveId,
+        driveItemId: params.driveItemId,
+        messageId: params.messageId,
+        expectedParentFolderId: params.expectedParentFolderId,
+        expectedChangeKey: params.expectedChangeKey,
+        expectedSourceETag: params.expectedSourceETag,
+      } as DrivePdfDraftInput;
+      const account = params.account as string | undefined;
+      try {
+        const accountError = await checkAccountParamInBearerMode(account, authManager);
+        if (accountError) throw new DrivePdfDraftError('ACCOUNT_SCOPE_DENIED');
+        let accessToken: string | undefined;
+        if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+          accessToken = await authManager.getTokenForAccount(account);
+        }
+        const sourcePath =
+          '/drives/' + encodeURIComponent(input.driveId) +
+          '/items/' + encodeURIComponent(input.driveItemId);
+        const mailPath = '/me/messages/' + encodeURIComponent(input.messageId);
+        const prefer = { Prefer: 'IdType="ImmutableId"' };
+        const readJson = async (endpoint: string) => {
+          const result = await graphClient.graphRequest(endpoint, {
+            accessToken, headers: prefer, forceJsonOutput: true, preserveODataMetadata: true,
+          });
+          return parseGraphUtilityJson(result, endpoint);
+        };
+        const readBytes = async (endpoint: string, limit: number, etag?: string) => {
+          const stream = await graphClient.downloadStream(endpoint, {
+            accessToken,
+            headers: { ...prefer, ...(etag ? { 'If-Match': etag } : {}) },
+          });
+          const reader = stream.body.getReader();
+          const chunks: Buffer[] = [];
+          let total = 0;
+          try {
+            while (true) {
+              const step = await reader.read();
+              if (step.done) break;
+              const chunk = Buffer.from(step.value);
+              total += chunk.length;
+              if (total > limit) throw new DrivePdfDraftError('BINARY_LIMIT_EXCEEDED');
+              chunks.push(chunk);
+            }
+            return Buffer.concat(chunks, total);
+          } finally {
+            await reader.cancel().catch(() => undefined);
+            reader.releaseLock();
+          }
+        };
+        const listPath =
+          mailPath + '/attachments?$top=100&$select=id,name,contentType,isInline,contentId,size';
+        const result = await attachDrivePdfToMailDraft(input, {
+          readActor: () => readJson('/me?$select=id'),
+          readSource: () => readJson(sourcePath + '?$select=id,name,size,eTag,file,parentReference'),
+          readDraft: () => readJson(
+            mailPath +
+              '?$select=id,isDraft,parentFolderId,changeKey,subject,body,toRecipients,ccRecipients,bccRecipients,replyTo,from,sender,conversationId,internetMessageId'
+          ),
+          listAttachments: () => readJson(listPath),
+          readSourceBytes: (maxBytes, etag) =>
+            readBytes(sourcePath + '/content', maxBytes, etag),
+          readAttachmentBytes: (id, maxBytes) =>
+            readBytes(mailPath + '/attachments/' + encodeURIComponent(id) + '/$value', maxBytes),
+          appendFile: async (file) => {
+            const ack = await graphClient.graphRequest(mailPath + '/attachments', {
+              accessToken, method: 'POST',
+              headers: { ...prefer, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                name: file.name, contentType: 'application/pdf',
+                isInline: false, contentBytes: file.contentBytes,
+              }),
+              forceJsonOutput: true, preserveODataMetadata: true,
+            });
+            return {
+              status: Number(ack._meta?.http_status),
+              resource: parseGraphUtilityJson(ack, 'append-draft-pdf'),
+            };
+          },
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          _meta: { result_count: 1, result_bytes: result.decodedBytes },
+        };
+      } catch (error) {
+        const code = error instanceof DrivePdfDraftError
+          ? error.code : 'DRIVE_PDF_DRAFT_ERROR';
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            error: code,
+            possibleWrite: error instanceof DrivePdfDraftError && error.possibleWrite,
+            ...(error instanceof DrivePdfDraftError && error.attemptId
+              ? { attemptId: error.attemptId } : {}),
+          }) }],
           isError: true,
         };
       }
@@ -2970,6 +3118,7 @@ export function registerGraphTools(
     accountNames,
   };
   for (const utility of UTILITY_TOOLS) {
+    if (!utilityEnabled(utility)) continue;
     if (readOnly && !utility.readOnlyHint) continue;
     if (httpMode && utility.stdioOnly) continue;
     if (enabledToolsRegex && !enabledToolsRegex.test(utility.name)) continue;
@@ -3184,6 +3333,7 @@ export function registerDiscoveryTools(
     );
   }
   const utilityTools = UTILITY_TOOLS.filter((u) => {
+    if (!utilityEnabled(u)) return false;
     if (readOnly && !u.readOnlyHint) return false;
     if (httpMode && u.stdioOnly) return false;
     if (enabledToolsRegex && !enabledToolsRegex.test(u.name)) return false;
