@@ -205,6 +205,16 @@ describe('Outlook attachment to new OneDrive or SharePoint file', () => {
     expect(f.sessions).toBe(0);
   });
 
+  it('rejects source metadata size inconsistent with the original bytes', async () => {
+    for (const metadataSize of [originalPdf.length - 1, originalPdf.length + 65_537]) {
+      const f = fixture({ metadataSize });
+      const error = await getError(() => saveMailAttachmentToDrive(input, f.deps));
+      expect(error.code).toBe('SOURCE_METADATA_SIZE_MISMATCH');
+      expect(error.possibleWrite).toBe(false);
+      expect(f.sessions).toBe(0);
+    }
+  });
+
   it('does not export references, item attachments or inline CID resources', async () => {
     for (const opts of [
       { attachmentType: '#microsoft.graph.referenceAttachment' },
