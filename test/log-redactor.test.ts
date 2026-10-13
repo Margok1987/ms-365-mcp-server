@@ -40,6 +40,22 @@ describe('redactSensitive', () => {
     );
   });
 
+  it('redacts a long email local part without leaving its prefix in logs', () => {
+    const email = `${'a'.repeat(128)}@example.com`;
+    expect(redactSensitive(`login failed for ${email}`)).toBe(
+      'login failed for [REDACTED_EMAIL]'
+    );
+  });
+
+  it('handles large uninterrupted base64-like content without quadratic scanning', () => {
+    // Old email regex rescanned the full suffix at every byte without an @.
+    // A bounded 64 KiB regression test avoids submitting real attachments.
+    const content = 'A'.repeat(65_536);
+    const start = performance.now();
+    expect(redactSensitive(content)).toBe(content);
+    expect(performance.now() - start).toBeLessThan(1_000);
+  });
+
   it('leaves non-sensitive text untouched', () => {
     const msg = 'Microsoft 365 MCP Server starting on port 3000';
     expect(redactSensitive(msg)).toBe(msg);
