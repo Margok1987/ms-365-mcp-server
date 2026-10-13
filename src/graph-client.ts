@@ -558,10 +558,11 @@ class GraphClient {
 
   async graphRequest(endpoint: string, options: GraphRequestOptions = {}): Promise<McpResponse> {
     try {
-      // Redact accessToken from log output to prevent credential leakage (#601)
-      const { accessToken: _redacted, ...safeOptions } = options;
+      // Never log request bodies: base64 file attachments can be megabytes long,
+      // block log-redaction on the event loop, and expose private document contents.
+      const { accessToken: _redacted, body: _omittedBody, ...safeOptions } = options;
       logger.info(
-        `Calling ${endpoint} with options: ${JSON.stringify(safeOptions)}${_redacted ? ' [accessToken=REDACTED]' : ''}`
+        `Calling ${endpoint} with options: ${JSON.stringify(safeOptions)}${_omittedBody === undefined ? '' : ' [body=OMITTED]'}${_redacted ? ' [accessToken=REDACTED]' : ''}`
       );
 
       // Use new OAuth-aware request method
