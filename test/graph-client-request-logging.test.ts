@@ -3,7 +3,7 @@ import GraphClient from '../src/graph-client.js';
 import logger from '../src/logger.js';
 
 describe('GraphClient request logging', () => {
-  it('omits raw attachment bodies and bearer tokens while preserving request metadata', async () => {
+  it('omits attachment bodies and bearer tokens from Graph logs', async () => {
     const marker = 'SYNTHETIC_PDF_CONTENT_MUST_NOT_BE_LOGGED';
     const token = 'SYNTHETIC_GRAPH_TOKEN_MUST_NOT_BE_LOGGED';
     const logSpy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
@@ -38,7 +38,9 @@ describe('GraphClient request logging', () => {
       expect(response.isError).not.toBe(true);
       expect(fetchMock).toHaveBeenCalledOnce();
       const messages = logSpy.mock.calls.map(([message]) => String(message));
-      const requestLog = messages.find((message) => message.includes('Calling /$batch with options:'));
+      const requestLog = messages.find((message) =>
+        message.includes('Calling /$batch with options:')
+      );
       expect(requestLog).toContain('[body=OMITTED]');
       expect(requestLog).toContain('POST');
       expect(messages.join('\\n')).not.toContain(marker);
