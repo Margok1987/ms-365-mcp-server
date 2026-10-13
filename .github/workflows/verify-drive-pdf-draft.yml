@@ -1,10 +1,12 @@
-name: Verify OneDrive PDF to Outlook Draft
+name: Verify Microsoft 365 File Transfers
 
 on:
   push:
     paths:
       - "src/lib/drive-pdf-mail-attachment.ts"
       - "src/lib/drive-pdf-mail-attachment.test.ts"
+      - "src/lib/mail-attachment-to-drive.ts"
+      - "src/lib/mail-attachment-to-drive.test.ts"
       - "src/graph-tools.ts"
       - "src/graph-client.ts"
       - ".github/workflows/verify-drive-pdf-draft.yml"
@@ -12,6 +14,8 @@ on:
     paths:
       - "src/lib/drive-pdf-mail-attachment.ts"
       - "src/lib/drive-pdf-mail-attachment.test.ts"
+      - "src/lib/mail-attachment-to-drive.ts"
+      - "src/lib/mail-attachment-to-drive.test.ts"
       - "src/graph-tools.ts"
       - "src/graph-client.ts"
       - ".github/workflows/verify-drive-pdf-draft.yml"
@@ -39,7 +43,7 @@ jobs:
         run: npm run lint
       - name: Provider format policy
         run: npm run format:check
-      - name: Native PDF bridge unit tests
-        run: npx vitest run src/lib/drive-pdf-mail-attachment.test.ts
+      - name: Bidirectional attachment transfer unit tests
+        run: npx vitest run src/lib/drive-pdf-mail-attachment.test.ts src/lib/mail-attachment-to-drive.test.ts
       - name: Bundle MCP server
         run: npm run build
