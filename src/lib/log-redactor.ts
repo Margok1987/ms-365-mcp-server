@@ -47,9 +47,11 @@ const REDACTIONS: RedactionPattern[] = [
     pattern: /([?&]code=)[^&\s"']+/gi,
     replacement: '$1[REDACTED]',
   },
-  // Email addresses / UPNs
+  // Email addresses / UPNs. The left boundary is critical for linear-time
+  // scanning: without it, a long base64 run lacking @ restarts the greedy
+  // local-part match at every character and stalls the Node.js event loop.
   {
-    pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+    pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
     replacement: '[REDACTED_EMAIL]',
   },
 ];
