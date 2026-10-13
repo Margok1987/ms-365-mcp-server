@@ -62,6 +62,8 @@ function requireId(value: unknown, field: string): asserts value is string {
       value.length > 0 &&
       value.length <= 4096 &&
       value.trim() === value &&
+      value !== '.' &&
+      value !== '..' &&
       !/[\x00-\x20\x7f?#]/.test(value),
     'INVALID_' + field.toUpperCase()
   );
