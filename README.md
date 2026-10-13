@@ -677,42 +677,43 @@ Environment variables:
 
 ## Server-side OneDrive PDF attachment to an unsent Outlook draft (opt-in)
 
-The \`attach-drive-pdf-to-mail-draft\` utility is a separate, explicitly opt-in
+The `attach-drive-pdf-to-mail-draft` utility is a separate, explicitly opt-in
 provider capability. When the operator sets
-\`MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH=true\`, discovery and the direct MCP
+`MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH=true`, discovery and the direct MCP
 tool catalog can expose it. The default process remains unchanged, and an
 operator's opt-in does **not** by itself admit an unqualified tool to a
 ChatGPT technical release or consumer binding.
 
-The caller supplies \`driveId\`, \`driveItemId\`, immutable \`messageId\`,
-\`expectedParentFolderId\`, \`expectedChangeKey\`,
-\`expectedSourceETag\` and \`confirm: true\`. No PDF bytes, arbitrary URL,
+The caller supplies `driveId`, `driveItemId`, immutable `messageId`,
+`expectedParentFolderId`, `expectedChangeKey`,
+`expectedSourceETag` and `confirm: true`. No PDF bytes, arbitrary URL,
 SMTP recipients, alternate account or body rewrite is accepted as a parameter.
 The utility uses the currently authenticated Graph account to retrieve one
 existing OneDrive PDF and attach it as a *real* fileAttachment to one existing
-unsent \`/me\` draft. The source bytes never appear in the model-visible tool
+unsent `/me` draft. The source bytes never appear in the model-visible tool
 arguments or successful result. Microsoft Graph still uses its normal under-3-MB
 fileAttachment POST; the 3-MB upload-session API and referenceAttachment links
 are not substitutes.
 
 Before appending once, the server verifies source drive/item ID, original
-filename, \`application/pdf\`, a valid PDF signature, 15–2,000,000 decoded
-bytes, source eTag, draft ID/folder/changeKey, \`isDraft=true\`, current actor
+filename, `application/pdf`, a valid PDF signature, 15–2,000,000 decoded
+bytes, source eTag, draft ID/folder/changeKey, `isDraft=true`, current actor
 and every existing attachment. It refuses an incomplete attachment page,
 existing same-name child, more than 12 prior attachments, or prior binary
 resources larger than 3 MB. Actual bytes of all pre-existing children, including
 CID-inline signature resources, are SHA-256-frozen for later comparison.
-Source content is read with its known eTag as an \`If-Match\` precondition.
-The message ID preference is requested as \`IdType="ImmutableId"\` and checked
-against the actual parent and returned child. The source, actor, attachment
+Source content is read with its known eTag as an `If-Match` precondition.
+The message ID preference is requested as `IdType="ImmutableId"` and
+parent/child IDs are compared with the actual provider responses. A real live
+qualification must separately establish that this preference was applied. The source, actor, attachment
 inventory and current draft are checked again immediately before writing.
 
 After the one provider POST, the server checks its 201 receipt, independently
 reads the same draft and attachment collection, checks the exact new PDF bytes
 and verifies all prior attachment bytes and draft composition remain unchanged.
 Its result contains only IDs, file name, original byte size, SHA-256,
-retained-child count and \`sent:false\`. This is a
-*read-then-write* guard, **not** a provider-atomic \`If-Match\` for the
+retained-child count and `sent:false`. This is a
+*read-then-write* guard, **not** a provider-atomic `If-Match` for the
 attachment POST itself. Any uncertain POST or failed post-write verification
 returns a possible-write/no-replay error; no automatic retry, deletion,
 send, permission change or replacement is made.
