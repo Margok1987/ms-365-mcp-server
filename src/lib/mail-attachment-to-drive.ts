@@ -211,7 +211,20 @@ export async function saveMailAttachmentToDrive(
   input: MailAttachmentToDriveInput,
   deps: MailAttachmentToDriveDeps
 ): Promise<MailAttachmentToDriveResult> {
-  for (const [key, value] of Object.entries(input)) requireId(value, key);
+  for (const key of ['messageId', 'attachmentId', 'driveId', 'parentItemId'] as const) {
+    requireId(input[key], key);
+  }
+  for (const key of ['expectedMessageChangeKey', 'expectedParentETag'] as const) {
+    requireFact(
+      typeof input[key] === 'string' && input[key].length > 0 && !/[\r\n]/.test(input[key]),
+      'INVALID_' + key.toUpperCase()
+    );
+  }
+  requireFact(
+    typeof input.expectedAttachmentName === 'string' &&
+      input.expectedAttachmentName.length > 0,
+    'INVALID_EXPECTED_ATTACHMENT_NAME'
+  );
   const attemptId = randomUUID();
   const [actor, originalMessage, originalAttachment, folder, preexisting] = await Promise.all([
     deps.readActor(),
