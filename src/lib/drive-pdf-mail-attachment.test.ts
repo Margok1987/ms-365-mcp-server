@@ -198,6 +198,18 @@ describe('server-side OneDrive PDF to unsent Outlook draft', () => {
     expect(f.posts).toBe(1);
   });
 
+  it('rejects dot-segment identities before any external read', async () => {
+    for (const suspicious of ['.', '..']) {
+      const f = fixture();
+      const changed = { ...input, messageId: suspicious };
+      expect(await errorCode(() => attachDrivePdfToMailDraft(changed, f.deps))).toBe(
+        'INVALID_MESSAGEID'
+      );
+      expect(f.posts).toBe(0);
+      expect(f.reads.sourceReads).toBe(0);
+    }
+  });
+
   it('rejects one byte beyond the limit without a write', async () => {
     const f = fixture({ sourceSize: MAX_DRAFT_PDF_BYTES + 1 });
     expect(await errorCode(() => attachDrivePdfToMailDraft(input, f.deps))).toBe('SOURCE_SIZE_CLASS');
