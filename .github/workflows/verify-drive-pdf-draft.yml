@@ -1,0 +1,45 @@
+name: Verify OneDrive PDF to Outlook Draft
+
+on:
+  push:
+    paths:
+      - "src/lib/drive-pdf-mail-attachment.ts"
+      - "src/lib/drive-pdf-mail-attachment.test.ts"
+      - "src/graph-tools.ts"
+      - "src/graph-client.ts"
+      - ".github/workflows/verify-drive-pdf-draft.yml"
+  pull_request:
+    paths:
+      - "src/lib/drive-pdf-mail-attachment.ts"
+      - "src/lib/drive-pdf-mail-attachment.test.ts"
+      - "src/graph-tools.ts"
+      - "src/graph-client.ts"
+      - ".github/workflows/verify-drive-pdf-draft.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout provider source
+        uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Static TypeScript typecheck
+        run: npm run typecheck
+      - name: Provider regression lint
+        run: npm run lint
+      - name: Provider format policy
+        run: npm run format:check
+      - name: Native PDF bridge unit tests
+        run: npx vitest run src/lib/drive-pdf-mail-attachment.test.ts
+      - name: Bundle MCP server
+        run: npm run build
