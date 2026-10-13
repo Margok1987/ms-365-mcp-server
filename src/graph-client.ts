@@ -561,8 +561,10 @@ class GraphClient {
       // Never log request bodies: base64 file attachments can be megabytes long,
       // block log-redaction on the event loop, and expose private document contents.
       const { accessToken: _redacted, body: _omittedBody, ...safeOptions } = options;
+      const bodyLabel = _omittedBody === undefined ? '' : ' [body=OMITTED]';
+      const tokenLabel = _redacted ? ' [accessToken=REDACTED]' : '';
       logger.info(
-        `Calling ${endpoint} with options: ${JSON.stringify(safeOptions)}${_omittedBody === undefined ? '' : ' [body=OMITTED]'}${_redacted ? ' [accessToken=REDACTED]' : ''}`
+        `Calling ${endpoint} with options: ${JSON.stringify(safeOptions)}${bodyLabel}${tokenLabel}`
       );
 
       // Use new OAuth-aware request method
