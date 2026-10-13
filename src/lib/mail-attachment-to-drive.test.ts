@@ -16,7 +16,7 @@ const input: MailAttachmentToDriveInput = {
   expectedParentETag: '"etag-folder"',
   expectedAttachmentName: 'Bücher Liste 2026.pdf',
 };
-const originalPdf = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(1_172_934, 0x48)]);
+const originalPdf = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(1_172_933, 0x48)]);
 
 interface Case {
   bytes?: Buffer;
