@@ -660,6 +660,7 @@ Environment variables:
 - `MS365_MCP_ATTACHMENT_HOST=<host>`: Interface the `MS365_MCP_ATTACHMENT_PORT` listener binds (alternative to --attachment-host; requires `--attachment-port`). Defaults to the host `--http` bound — which for a wildcard `--http` means both ports answer everywhere and the port split isolates nothing. See "Splitting the attachment listener"
 - `MS365_MCP_HTTP_LOCAL_FILE_TOOLS=true|1`: Register download-bytes-to-file over HTTP (alternative to --http-local-file-tools; same restrictions)
 - `MS365_MCP_ENABLE_DRIVE_MAIL_PDF_ATTACH=true`: Opt in to the experimental server-side `attach-drive-pdf-to-mail-draft` utility. **Default: disabled.** Source availability is not a qualification, deployment or consumer release. The utility never sends mail.
+- `MS365_MCP_ENABLE_MAIL_ATTACHMENT_TO_DRIVE=true`: Opt in to experimental `save-mail-attachment-to-drive` (real Outlook fileAttachment → create-only OneDrive/SharePoint file, up to 30 MiB). **Default: disabled; not a release or deployment.**
 - `MS365_MCP_CLOUD_TYPE=global|china`: Microsoft cloud environment (alternative to --cloud flag)
 - `LOG_LEVEL`: Set logging level (default: 'info')
 - `SILENT=true|1`: Disable console output
@@ -726,6 +727,58 @@ Run the source/typecheck/tests/build verification workflow before enabling this
 capability. A real authenticated, synthetic recipientless QA readback, negative
 error/recovery cases, cold/warm Q8 and the separate technical release plus
 consumer approval are still required before production business use.
+
+## Server-side Outlook attachment to new OneDrive/SharePoint file (opt-in)
+
+The distinct native utility `save-mail-attachment-to-drive` exports **one real,
+non-inline fileAttachment** from an existing `/me/messages/{messageId}` without
+changing the original message or attachment. It creates **one new file only**
+inside a selected OneDrive/SharePoint folder. No emails, recipients, attachment
+bytes, external upload URLs, or cross-account tokens are supplied by the caller.
+
+The caller arguments are: immutable `messageId`, exact `attachmentId`,
+`expectedMessageChangeKey`, `expectedAttachmentName`, destination `driveId`,
+`parentItemId`, `expectedParentETag` and **`confirm:true`**. The provider checks
+the same authenticated Microsoft actor, actual message changeKey, attachment
+kind/name/MIME/size, and destination folder ID, drive and eTag before taking
+any write action. File names are copied as-is (including spaces and Unicode);
+unsafe/invalid OneDrive path segments stop before writing. Inline CID assets,
+referenceAttachment cloud links and Outlook itemAttachment objects are not
+silently converted into real files.
+
+The core accepts 1 to **30 MiB of original attachment bytes**, fetched via the
+authenticated Microsoft Graph `/$value` stream, with strict in-memory/read
+limits. Source metadata may include a small provider-size overhead. Source and
+destination byte checksums use SHA-256. A second pre-dispatch read checks
+message, actor, attachment and folder currentness and confirms that the exact
+target filename is still absent. The implementation reuses the provider's
+existing `uploadChunksToSession` transport, with 320-KiB-aligned upload
+ranges and Graph `createUploadSession` **conflictBehavior=fail**: no
+overwrite/rename-on-conflict. Even a race creating the same name must fail,
+not replace another user's file.
+
+Successful upload receipt must identify the new Drive item, whose name,
+actual decoded size, folder and drive are checked independently by native
+Graph reads. The newly created file's exact bytes and the still-retained
+original Outlook attachment bytes must both match the pre-upload checksum,
+and the mail's selected body/audience/subject, status and changeKey must
+remain unchanged. If a chunk or final upload result is uncertain, the
+utility reports a **possible write / no automatic replay** result and never
+blindly creates a second file, deletes a file, sends a message, or overwrites.
+
+The feature is **disabled by default**. Opt-in requires
+`MS365_MCP_ENABLE_MAIL_ATTACHMENT_TO_DRIVE=true`, existing mail-read and
+file-write permissions, and any current provider allowlist. The feature flag
+is **not** an App release, CI qualification or WWW/GemKi consumer admission.
+The underlying source and tests are
+[mail-attachment-to-drive.ts](src/lib/mail-attachment-to-drive.ts) and
+[mail-attachment-to-drive.test.ts](src/lib/mail-attachment-to-drive.test.ts).
+A qualified runtime still requires full provider typecheck/lint/format/test/
+build, a synthetic same-account native E2E including conflict and ambiguous
+outcome cases, source/destination identity readback, independent cold/warm Q8,
+accepted technical release and explicit consumer binding. The normal
+`download-bytes`/`upload-file-content` roundtrip through model-facing Base64
+remains a separate native surface and is not this tool.
 
 ## Server-Minted Attachment URLs
 
