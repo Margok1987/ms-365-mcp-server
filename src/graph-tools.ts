@@ -47,6 +47,12 @@ import {
   type DrivePdfDraftInput,
 } from './lib/drive-pdf-mail-attachment.js';
 import type { OpenAIFileParam } from './lib/openai-file-source.js';
+import {
+  saveMailAttachmentToDrive,
+  MailAttachmentToDriveError,
+  type MailAttachmentToDriveInput,
+} from './lib/mail-attachment-to-drive.js';
+import { uploadChunksToSession } from './lib/upload-session-transport.js';
 export interface DiscoverySearchIndex {
   bm25: BM25Index;
   nameTokens: Map<string, Set<string>>;
@@ -854,10 +860,19 @@ interface UtilityTool {
   stdioOnly?: boolean;
   // Not exposed unless the provider Operator explicitly activates the new surface.
   enableEnv?: string;
+  // Only new opt-in utilities declare minimal scope groups. Existing general utilities unchanged.
+  scopeGroups?: string[][];
 }
 
-function utilityEnabled(utility: UtilityTool): boolean {
-  return !utility.enableEnv || process.env[utility.enableEnv] === 'true';
+function utilityEnabled(utility: UtilityTool, allowedScopesValue?: string): boolean {
+  if (utility.enableEnv && process.env[utility.enableEnv] !== 'true') return false;
+  if (!utility.scopeGroups) return true;
+  return (
+    getMissingAllowedScopesForGroups(
+      utility.scopeGroups,
+      parseAllowedScopes(allowedScopesValue)
+    ).length === 0
+  );
 }
 
 interface DisabledToolScope {
@@ -942,7 +957,7 @@ function collectDeniedToolPolicies(options: {
   }
 
   for (const utility of UTILITY_TOOLS) {
-    if (!utilityEnabled(utility)) continue;
+    if (!utilityEnabled(utility, options.allowedScopesValue)) continue;
     if (options.readOnly && !utility.readOnlyHint) continue;
     if (options.httpMode && utility.stdioOnly) continue;
     if (options.enabledToolsRegex && !options.enabledToolsRegex.test(utility.name)) {
@@ -1513,6 +1528,199 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             error: code,
             possibleWrite: error instanceof DrivePdfDraftError && error.possibleWrite,
             ...(error instanceof DrivePdfDraftError && error.attemptId
+              ? { attemptId: error.attemptId } : {}),
+          }) }],
+          isError: true,
+        };
+      }
+    },
+  },
+  {
+    name: 'save-mail-attachment-to-drive',
+    method: 'POST',
+    path: 'tool:save-mail-attachment-to-drive',
+    description:
+      'Copy one existing real Outlook message fileAttachment into a NEW OneDrive/SharePoint file using an original-byte server-side upload session. Never overwrites, deletes or sends. Source and destination SHA-256 readback; incomplete/unknown uploads never auto-retry. Disabled by default until separately enabled, qualified and released.',
+    searchKeywords:
+      'save received outlook email mail PDF attachment to onedrive sharepoint drive folder server side create only no base64 file',
+    enableEnv: 'MS365_MCP_ENABLE_MAIL_ATTACHMENT_TO_DRIVE',
+    scopeGroups: [
+      ['Mail.Read', 'Files.ReadWrite'],
+      ['Mail.ReadWrite', 'Files.ReadWrite'],
+      ['Mail.Read', 'Files.ReadWrite.All'],
+      ['Mail.ReadWrite', 'Files.ReadWrite.All'],
+      ['Mail.Read', 'Sites.ReadWrite.All'],
+      ['Mail.ReadWrite', 'Sites.ReadWrite.All'],
+    ],
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        messageId: z.string().min(1).describe('Immutable Graph ID of an existing /me message.'),
+        attachmentId: z.string().min(1).describe('Exact ID of one real non-inline fileAttachment.'),
+        expectedMessageChangeKey: z.string().min(1).describe('Fresh message changeKey from Graph.'),
+        expectedAttachmentName: z.string().min(1).describe('Original exact file name from Graph.'),
+        driveId: z.string().min(1).describe('Destination OneDrive/SharePoint drive ID.'),
+        parentItemId: z.string().min(1).describe('Destination folder driveItem ID.'),
+        expectedParentETag: z.string().min(1).describe('Fresh destination folder eTag.'),
+        confirm: z.literal(true).describe('Explicit permission to create one new destination file only.'),
+      };
+      if (ctx.multiAccount) {
+        schema.account = z.string().optional().describe(
+          'Currently selected delegated account; never a cross-account migration.'
+        );
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      if (params.confirm !== true) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'CONFIRM_REQUIRED' }) }],
+          isError: true,
+        };
+      }
+      const input = {
+        messageId: params.messageId,
+        attachmentId: params.attachmentId,
+        driveId: params.driveId,
+        parentItemId: params.parentItemId,
+        expectedMessageChangeKey: params.expectedMessageChangeKey,
+        expectedAttachmentName: params.expectedAttachmentName,
+        expectedParentETag: params.expectedParentETag,
+      } as MailAttachmentToDriveInput;
+      const account = params.account as string | undefined;
+      try {
+        const denied = await checkAccountParamInBearerMode(account, authManager);
+        if (denied) throw new MailAttachmentToDriveError('ACCOUNT_SCOPE_DENIED');
+        let accessToken: string | undefined;
+        if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+          accessToken = await authManager.getTokenForAccount(account);
+        }
+        const mailPath =
+          '/me/messages/' + encodeURIComponent(input.messageId);
+        const attachmentPath =
+          mailPath + '/attachments/' + encodeURIComponent(input.attachmentId);
+        const drivePath =
+          '/drives/' + encodeURIComponent(input.driveId);
+        const folderPath =
+          drivePath + '/items/' + encodeURIComponent(input.parentItemId);
+        const prefer = { Prefer: 'IdType="ImmutableId"' };
+        const graphJson = async (
+          endpoint: string,
+          options: Parameters<GraphClient['graphRequest']>[1] = {},
+          allow404 = false
+        ): Promise<Record<string, unknown> | null> => {
+          const answer = await graphClient.graphRequest(endpoint, {
+            ...options,
+            accessToken,
+            headers: { ...prefer, ...options.headers },
+            forceJsonOutput: true,
+            preserveODataMetadata: true,
+          });
+          if (
+            allow404 &&
+            answer.isError &&
+            auditHttpStatus(answer._meta?.http_status) === 404
+          ) return null;
+          return parseGraphUtilityJson(answer, endpoint);
+        };
+        const readJson = async (endpoint: string) => {
+          const json = await graphJson(endpoint);
+          if (json === null) throw new MailAttachmentToDriveError('GRAPH_READ_EMPTY');
+          return json;
+        };
+        const readBytes = async (endpoint: string, limit: number) => {
+          const transfer = await graphClient.downloadStream(endpoint, {
+            accessToken,
+            headers: prefer,
+          });
+          const reader = transfer.body.getReader();
+          const chunks: Buffer[] = [];
+          let length = 0;
+          try {
+            if (transfer.contentLength !== null && transfer.contentLength > limit) {
+              throw new MailAttachmentToDriveError('BINARY_READ_LIMIT');
+            }
+            while (true) {
+              const piece = await reader.read();
+              if (piece.done) break;
+              length += piece.value.length;
+              if (length > limit) {
+                throw new MailAttachmentToDriveError('BINARY_READ_LIMIT');
+              }
+              chunks.push(Buffer.from(piece.value));
+            }
+            return Buffer.concat(chunks, length);
+          } finally {
+            await reader.cancel().catch(() => undefined);
+            reader.releaseLock();
+          }
+        };
+        const destinationPath = (filename: string) =>
+          folderPath + ':/' + encodeURIComponent(filename);
+        const result = await saveMailAttachmentToDrive(input, {
+          readActor: () => readJson('/me?$select=id'),
+          readMessage: () => readJson(
+            mailPath +
+              '?$select=id,changeKey,parentFolderId,subject,isDraft,isRead,body,toRecipients,ccRecipients,bccRecipients,conversationId,hasAttachments'
+          ),
+          readAttachment: () => readJson(
+            attachmentPath + '?$select=id,name,size,contentType,isInline'
+          ),
+          readAttachmentBytes: (max) =>
+            readBytes(attachmentPath + '/$value', max),
+          readParent: () => readJson(
+            folderPath + '?$select=id,name,eTag,folder,parentReference'
+          ),
+          readDestination: (filename) =>
+            graphJson(
+              destinationPath(filename) +
+                '?$select=id,name,size,file,parentReference,eTag',
+              {},
+              true
+            ),
+          createUploadSession: async (filename) => {
+            const created = await readJson(
+              destinationPath(filename) + ':/createUploadSession'
+            ).catch(async () => {
+              // Deliberately do not issue a second POST on any uncertain response.
+              throw new MailAttachmentToDriveError('UPLOAD_SESSION_NOT_CREATED');
+            });
+            return { uploadUrl: String(created.uploadUrl ?? '') };
+          },
+          uploadSession: async (uploadUrl, bytes) => {
+            async function* source() {
+              yield bytes;
+            }
+            const uploaded = await uploadChunksToSession({
+              uploadUrl,
+              totalBytes: bytes.length,
+              source: source(),
+            });
+            return {
+              driveItem: uploaded.driveItem,
+              chunksUploaded: uploaded.chunksUploaded,
+            };
+          },
+          readDriveBytes: (itemId, max) =>
+            readBytes(
+              drivePath + '/items/' + encodeURIComponent(itemId) + '/content',
+              max
+            ),
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          _meta: { result_count: 1, result_bytes: result.originalBytes },
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            error: error instanceof MailAttachmentToDriveError
+              ? error.code : 'MAIL_ATTACHMENT_TO_DRIVE_ERROR',
+            possibleWrite:
+              error instanceof MailAttachmentToDriveError && error.possibleWrite,
+            ...(error instanceof MailAttachmentToDriveError && error.attemptId
               ? { attemptId: error.attemptId } : {}),
           }) }],
           isError: true,
@@ -3118,7 +3326,7 @@ export function registerGraphTools(
     accountNames,
   };
   for (const utility of UTILITY_TOOLS) {
-    if (!utilityEnabled(utility)) continue;
+    if (!utilityEnabled(utility, allowedScopesValue)) continue;
     if (readOnly && !utility.readOnlyHint) continue;
     if (httpMode && utility.stdioOnly) continue;
     if (enabledToolsRegex && !enabledToolsRegex.test(utility.name)) continue;
@@ -3333,7 +3541,7 @@ export function registerDiscoveryTools(
     );
   }
   const utilityTools = UTILITY_TOOLS.filter((u) => {
-    if (!utilityEnabled(u)) return false;
+    if (!utilityEnabled(u, allowedScopesValue)) return false;
     if (readOnly && !u.readOnlyHint) return false;
     if (httpMode && u.stdioOnly) return false;
     if (enabledToolsRegex && !enabledToolsRegex.test(u.name)) return false;
