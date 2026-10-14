@@ -1,6 +1,7 @@
 name: Verify Microsoft 365 File Transfers
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "src/lib/drive-pdf-mail-attachment.ts"
