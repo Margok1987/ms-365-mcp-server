@@ -1,0 +1,15 @@
+FROM ms365-softeria-fork:f4034f9
+
+RUN printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'set -a' \
+  '. /run/ms365/config.env' \
+  'set +a' \
+  'MS365_MCP_CLIENT_SECRET=$(tr -d "\\r\\n" < /run/ms365/client-secret)' \
+  'export MS365_MCP_CLIENT_SECRET' \
+  'exec node /app/dist/index.js "$@"' \
+  > /usr/local/bin/ms365-fork-start \
+  && chmod 0755 /usr/local/bin/ms365-fork-start
+
+ENTRYPOINT ["/usr/local/bin/ms365-fork-start"]
