@@ -20,6 +20,10 @@ on:
       - "src/graph-client.ts"
       - ".github/workflows/verify-drive-pdf-draft.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
