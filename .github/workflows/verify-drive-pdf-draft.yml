@@ -51,6 +51,8 @@ jobs:
         run: npx vitest run --maxWorkers=1 --no-file-parallelism src/lib/drive-pdf-mail-attachment.test.ts src/lib/mail-attachment-to-drive.test.ts
       - name: Bundle MCP server
         run: npm run build
+      - name: Production dependency security gate
+        run: npm audit --omit=dev --audit-level=critical
       - name: Provider format policy
         run: npm run format:check
       - name: Formatter output evidence (temporary runner only)
