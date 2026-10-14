@@ -9,4 +9,3 @@ For every future change to code, tests, scripts, configuration, builds, dependen
 - Fix shared root causes once, preserve existing conventions, and change all affected paths. Keep validation, meaningful errors, recovery, and security controls intact. Test nontrivial logic and run every existing required integration/regression check.
 - Never shrink explicitly requested behavior, supported input/response combinations, safety, permissions, live evidence, verification, deployment/CI gates, or release acceptance just to reduce code. Dedicated repository/domain instructions remain authoritative; Ponytail is their compatible simplicity discipline.
 - Do not refactor untouched code or introduce a runtime dependency merely to adopt this method.
-
