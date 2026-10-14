@@ -58,8 +58,8 @@ function fixture(options: Case = {}) {
   const attachment = () => {
     sourceReads += 1;
     const changing =
-      options.attachmentChangeBeforeUpload && sourceReads > 1 ||
-      options.attachmentChangeAfterUpload && committed;
+      (options.attachmentChangeBeforeUpload && sourceReads > 1) ||
+      (options.attachmentChangeAfterUpload && committed);
     return {
       id: input.attachmentId,
       '@odata.type': options.attachmentType ?? '#microsoft.graph.fileAttachment',
@@ -73,9 +73,11 @@ function fixture(options: Case = {}) {
     messageReads += 1;
     return {
       id: input.messageId,
-      changeKey: options.sourceChangeKey ?? (
-        committed && options.sourceChangeAfterUpload ? 'CK-other' : input.expectedMessageChangeKey
-      ),
+      changeKey:
+        options.sourceChangeKey ??
+        (committed && options.sourceChangeAfterUpload
+          ? 'CK-other'
+          : input.expectedMessageChangeKey),
       parentFolderId: 'inbox-1',
       subject: 'Workshop – Rückmeldung',
       isDraft: false,
@@ -119,9 +121,7 @@ function fixture(options: Case = {}) {
     readDestination: async () => {
       destReads += 1;
       const exists =
-        options.preexisting ||
-        (options.newConflictBeforeWrite && destReads >= 2) ||
-        committed;
+        options.preexisting || (options.newConflictBeforeWrite && destReads >= 2) || committed;
       return exists ? destination() : null;
     },
     createUploadSession: async (filename) => {
@@ -150,11 +150,21 @@ function fixture(options: Case = {}) {
   };
   return {
     deps,
-    get writes() { return writes; },
-    get sessions() { return sessions; },
-    get sourceReads() { return sourceReads; },
-    get committed() { return committed; },
-    get messageReads() { return messageReads; },
+    get writes() {
+      return writes;
+    },
+    get sessions() {
+      return sessions;
+    },
+    get sourceReads() {
+      return sourceReads;
+    },
+    get committed() {
+      return committed;
+    },
+    get messageReads() {
+      return messageReads;
+    },
   };
 }
 
@@ -267,7 +277,8 @@ describe('Outlook attachment to new OneDrive or SharePoint file', () => {
       const f = fixture(opts);
       const error = await getError(() => saveMailAttachmentToDrive(input, f.deps));
       expect([
-        'DESTINATION_NOT_A_FOLDER', 'DESTINATION_DRIVE_DRIFT',
+        'DESTINATION_NOT_A_FOLDER',
+        'DESTINATION_DRIVE_DRIFT',
         'DESTINATION_FOLDER_ETAG_DRIFT',
       ]).toContain(error.code);
       expect(f.writes).toBe(0);
@@ -283,7 +294,8 @@ describe('Outlook attachment to new OneDrive or SharePoint file', () => {
       const f = fixture(opts);
       const error = await getError(() => saveMailAttachmentToDrive(input, f.deps));
       expect([
-        'SOURCE_MESSAGE_CHANGEKEY_DRIFT', 'SOURCE_ATTACHMENT_NAME_DRIFT',
+        'SOURCE_MESSAGE_CHANGEKEY_DRIFT',
+        'SOURCE_ATTACHMENT_NAME_DRIFT',
         'ACTOR_ID_DRIFT',
       ]).toContain(error.code);
       expect(f.sessions).toBe(0);
