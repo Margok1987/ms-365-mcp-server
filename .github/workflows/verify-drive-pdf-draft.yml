@@ -43,9 +43,14 @@ jobs:
         run: npm run typecheck
       - name: Provider regression lint
         run: npm run lint
-      - name: Provider format policy
-        run: npm run format:check
       - name: Bidirectional attachment transfer unit tests
         run: npx vitest run src/lib/drive-pdf-mail-attachment.test.ts src/lib/mail-attachment-to-drive.test.ts
       - name: Bundle MCP server
         run: npm run build
+      - name: Provider format policy
+        run: npm run format:check
+      - name: Formatter output evidence (temporary runner only)
+        if: failure()
+        run: |
+          npx prettier --write README.md src/graph-tools.ts src/lib/drive-pdf-mail-attachment.ts src/lib/drive-pdf-mail-attachment.test.ts src/lib/mail-attachment-to-drive.ts src/lib/mail-attachment-to-drive.test.ts
+          node -e 'const fs=require("fs");const paths=["README.md","src/graph-tools.ts","src/lib/drive-pdf-mail-attachment.ts","src/lib/drive-pdf-mail-attachment.test.ts","src/lib/mail-attachment-to-drive.ts","src/lib/mail-attachment-to-drive.test.ts"];for(const path of paths){const source=fs.readFileSync(path);const encoded=source.toString("base64");const width=3600;const parts=Math.ceil(encoded.length/width);for(let i=0;i<parts;i++){console.log("FORMATTED_SOURCE_CHUNK "+JSON.stringify({path,index:i,parts,data:encoded.slice(i*width,(i+1)*width)}));}}'
