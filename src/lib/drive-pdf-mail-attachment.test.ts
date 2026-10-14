@@ -75,9 +75,10 @@ function fixture(options: FixtureOptions = {}) {
       parentFolderId: input.expectedParentFolderId,
       subject: 'Synthetic QA draft only',
       body: { contentType: 'html', content: '<p>QA with CID logo</p><img src="cid:logo">' },
-      toRecipients: applied && options.mutateAudienceAfterPost
-        ? [{ emailAddress: { address: 'unexpected@example.test' } }]
-        : [],
+      toRecipients:
+        applied && options.mutateAudienceAfterPost
+          ? [{ emailAddress: { address: 'unexpected@example.test' } }]
+          : [],
       ccRecipients: [],
       bccRecipients: [],
       replyTo: [],
@@ -124,10 +125,12 @@ function fixture(options: FixtureOptions = {}) {
     listAttachments: async () => listAttachments(),
     readSourceBytes: async () => Buffer.from(pdf),
     readAttachmentBytes: async (id) => {
-      if (id === prior.id) return options.mutatePriorAfterPost && applied
-        ? Buffer.from('mutated inline PNG') : Buffer.from(oldLogo);
-      if (id === appended.id && applied) return options.mutateNewBytes
-        ? Buffer.from('%PDF-evil') : Buffer.from(pdf);
+      if (id === prior.id)
+        return options.mutatePriorAfterPost && applied
+          ? Buffer.from('mutated inline PNG')
+          : Buffer.from(oldLogo);
+      if (id === appended.id && applied)
+        return options.mutateNewBytes ? Buffer.from('%PDF-evil') : Buffer.from(pdf);
       throw new Error('unexpected attachment read');
     },
     appendFile: async (file) => {
@@ -137,10 +140,11 @@ function fixture(options: FixtureOptions = {}) {
       expect(Buffer.from(file.contentBytes, 'base64').equals(pdf)).toBe(true);
       applied = true;
       if (options.throwPost) throw new Error('connection lost after possible Graph success');
-      if (options.badAcknowledgement) return {
-        status: 201,
-        resource: { id: '', name: fileName, contentType: 'application/pdf', isInline: false },
-      };
+      if (options.badAcknowledgement)
+        return {
+          status: 201,
+          resource: { id: '', name: fileName, contentType: 'application/pdf', isInline: false },
+        };
       return {
         status: options.badStatus ? 202 : 201,
         resource: {
@@ -154,9 +158,15 @@ function fixture(options: FixtureOptions = {}) {
   };
   return {
     deps,
-    get posts() { return posts; },
-    get applied() { return applied; },
-    get reads() { return { sourceReads, draftReads, actorReads, listReads }; },
+    get posts() {
+      return posts;
+    },
+    get applied() {
+      return applied;
+    },
+    get reads() {
+      return { sourceReads, draftReads, actorReads, listReads };
+    },
   };
 }
 
@@ -193,7 +203,9 @@ describe('server-side OneDrive PDF to unsent Outlook draft', () => {
   });
 
   it('accepts the hard 2,000,000-byte boundary', async () => {
-    const f = fixture({ pdf: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(MAX_DRAFT_PDF_BYTES - 5)]) });
+    const f = fixture({
+      pdf: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(MAX_DRAFT_PDF_BYTES - 5)]),
+    });
     const result = await attachDrivePdfToMailDraft(input, f.deps);
     expect(result.decodedBytes).toBe(MAX_DRAFT_PDF_BYTES);
     expect(f.posts).toBe(1);
@@ -213,13 +225,17 @@ describe('server-side OneDrive PDF to unsent Outlook draft', () => {
 
   it('rejects one byte beyond the limit without a write', async () => {
     const f = fixture({ sourceSize: MAX_DRAFT_PDF_BYTES + 1 });
-    expect(await errorCode(() => attachDrivePdfToMailDraft(input, f.deps))).toBe('SOURCE_SIZE_CLASS');
+    expect(await errorCode(() => attachDrivePdfToMailDraft(input, f.deps))).toBe(
+      'SOURCE_SIZE_CLASS'
+    );
     expect(f.posts).toBe(0);
   });
 
   it('rejects false PDF MIME and corrupt PDF signature before writing', async () => {
     const a = fixture({ mimeType: 'application/octet-stream' });
-    expect(await errorCode(() => attachDrivePdfToMailDraft(input, a.deps))).toBe('SOURCE_MIME_NOT_PDF');
+    expect(await errorCode(() => attachDrivePdfToMailDraft(input, a.deps))).toBe(
+      'SOURCE_MIME_NOT_PDF'
+    );
     expect(a.posts).toBe(0);
     const b = fixture({ pdf: Buffer.from('NOT-PDF-test-payload') });
     expect(await errorCode(() => attachDrivePdfToMailDraft(input, b.deps))).toBe(
@@ -238,10 +254,14 @@ describe('server-side OneDrive PDF to unsent Outlook draft', () => {
 
   it('rejects changed source revision or draft changeKey without writing', async () => {
     const a = fixture({ sourceETag: '"stale"' });
-    expect(await errorCode(() => attachDrivePdfToMailDraft(input, a.deps))).toBe('SOURCE_ETAG_DRIFT');
+    expect(await errorCode(() => attachDrivePdfToMailDraft(input, a.deps))).toBe(
+      'SOURCE_ETAG_DRIFT'
+    );
     expect(a.posts).toBe(0);
     const b = fixture({ parentChangeKey: 'CK-elsewhere' });
-    expect(await errorCode(() => attachDrivePdfToMailDraft(input, b.deps))).toBe('DRAFT_REVISION_DRIFT');
+    expect(await errorCode(() => attachDrivePdfToMailDraft(input, b.deps))).toBe(
+      'DRAFT_REVISION_DRIFT'
+    );
     expect(b.posts).toBe(0);
   });
 
@@ -255,7 +275,9 @@ describe('server-side OneDrive PDF to unsent Outlook draft', () => {
 
   it('detects OneDrive source mutation during preflight without dispatch', async () => {
     const f = fixture({ mutateSourceBeforePost: true });
-    expect(await errorCode(() => attachDrivePdfToMailDraft(input, f.deps))).toBe('SOURCE_ETAG_DRIFT');
+    expect(await errorCode(() => attachDrivePdfToMailDraft(input, f.deps))).toBe(
+      'SOURCE_ETAG_DRIFT'
+    );
     expect(f.posts).toBe(0);
   });
 
