@@ -73,7 +73,8 @@ describe('GraphClient audit metadata', () => {
   it('preserves full OData metadata when explicitly requested', async () => {
     const body = {
       value: [{ id: 'm1' }],
-      '@odata.context': 'https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.message)',
+      '@odata.context':
+        'https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.message)',
       '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skip=1',
     };
     fetchWithResilienceMock.mockResolvedValue(
