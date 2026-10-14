@@ -31,6 +31,11 @@ export default [
     },
   },
   {
+    // TypeScript's own typecheck owns names such as RequestInit; no-undef is a JS-only check.
+    files: ['**/*.{ts,tsx}'],
+    rules: { 'no-undef': 'off' },
+  },
+  {
     ignores: [
       'node_modules/**',
       'dist/**',
