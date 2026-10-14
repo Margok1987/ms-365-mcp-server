@@ -7,11 +7,12 @@ describe('GraphClient request logging', () => {
     const marker = 'SYNTHETIC_PDF_CONTENT_MUST_NOT_BE_LOGGED';
     const token = 'SYNTHETIC_GRAPH_TOKEN_MUST_NOT_BE_LOGGED';
     const logSpy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ responses: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ responses: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
     );
     vi.stubGlobal('fetch', fetchMock);
 
