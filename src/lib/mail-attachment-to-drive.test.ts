@@ -132,7 +132,8 @@ function fixture(options: Case = {}) {
     },
     uploadSession: async (_url, content) => {
       writes += 1;
-      expect(content).toEqual(bytes);
+      // Constant-memory, full byte equality even for 30 MiB; avoid Vitest object-key expansion.
+      expect(content.equals(bytes)).toBe(true);
       committed = true;
       if (options.ambiguousFinal) throw new Error('final byte-range reply lost');
       return {
