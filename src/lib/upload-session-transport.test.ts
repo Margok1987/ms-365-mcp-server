@@ -42,12 +42,8 @@ describe('uploadChunksToSession', () => {
     const second = new Uint8Array(7);
     const fetchImpl = vi
       .fn()
-      .mockResolvedValueOnce(
-        json(202, { nextExpectedRanges: [`${GRAPH_UPLOAD_GRANULARITY}-`] })
-      )
-      .mockResolvedValueOnce(
-        json(201, { id: 'item-2', size: GRAPH_UPLOAD_GRANULARITY + 7 })
-      );
+      .mockResolvedValueOnce(json(202, { nextExpectedRanges: [`${GRAPH_UPLOAD_GRANULARITY}-`] }))
+      .mockResolvedValueOnce(json(201, { id: 'item-2', size: GRAPH_UPLOAD_GRANULARITY + 7 }));
 
     const result = await uploadChunksToSession({
       uploadUrl: 'https://upload.example.test/session',
@@ -144,17 +140,12 @@ describe('uploadChunksToSession', () => {
   });
 
   it('rejects mismatched nextExpectedRanges', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      json(202, { nextExpectedRanges: ['1-'] })
-    );
+    const fetchImpl = vi.fn().mockResolvedValue(json(202, { nextExpectedRanges: ['1-'] }));
     await expect(
       uploadChunksToSession({
         uploadUrl: 'https://upload.example.test/session',
         totalBytes: GRAPH_UPLOAD_GRANULARITY + 1,
-        source: bytes(
-          new Uint8Array(GRAPH_UPLOAD_GRANULARITY),
-          new Uint8Array([1])
-        ),
+        source: bytes(new Uint8Array(GRAPH_UPLOAD_GRANULARITY), new Uint8Array([1])),
         fetchImpl,
         chunkSize: GRAPH_UPLOAD_GRANULARITY,
       })
@@ -178,10 +169,7 @@ describe('uploadChunksToSession', () => {
     const result = await uploadChunksToSession({
       uploadUrl: 'https://upload.example.test/session',
       totalBytes: GRAPH_UPLOAD_GRANULARITY + 1,
-      source: bytes(
-        new Uint8Array(GRAPH_UPLOAD_GRANULARITY),
-        new Uint8Array([1])
-      ),
+      source: bytes(new Uint8Array(GRAPH_UPLOAD_GRANULARITY), new Uint8Array([1])),
       fetchImpl,
       chunkSize: GRAPH_UPLOAD_GRANULARITY,
     });
@@ -219,9 +207,7 @@ describe('uploadChunksToSession', () => {
   });
 
   it('rejects a source shorter than declared', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(json(202, { nextExpectedRanges: ['1-'] }));
+    const fetchImpl = vi.fn().mockResolvedValue(json(202, { nextExpectedRanges: ['1-'] }));
     await expect(
       uploadChunksToSession({
         uploadUrl: 'https://upload.example.test/session',
