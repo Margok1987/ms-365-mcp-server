@@ -55,6 +55,12 @@ jobs:
         run: npm audit --omit=dev --audit-level=critical
       - name: Provider format policy
         run: npm run format:check
+      - name: Production dependency remediation proposal (temporary runner only)
+        if: failure()
+        run: |
+          npm audit fix --package-lock-only --omit=dev || true
+          npm audit --omit=dev --audit-level=critical || true
+          node -e 'const fs=require("fs"),cp=require("child_process");const old=JSON.parse(cp.execFileSync("git",["show","HEAD:package-lock.json"],{encoding:"utf8",maxBuffer:2000000}));const next=JSON.parse(fs.readFileSync("package-lock.json","utf8"));const all=new Set([...Object.keys(old.packages),...Object.keys(next.packages)]);const changes=[...all].filter(p=>old.packages[p]?.version!==next.packages[p]?.version).map(p=>({name:p,from:old.packages[p]?.version??null,to:next.packages[p]?.version??null}));console.log("LOCKFILE_REMEDIATION_SUMMARY "+JSON.stringify({changedPackages:changes.length,changes}));const data=fs.readFileSync("package-lock.json").toString("base64"),step=3600,parts=Math.ceil(data.length/step);for(let i=0;i<parts;i++)console.log("REMEDIATED_LOCK_CHUNK "+JSON.stringify({index:i,parts,data:data.slice(i*step,(i+1)*step)}));}'
       - name: Formatter output evidence (temporary runner only)
         if: failure()
         run: |
