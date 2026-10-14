@@ -60,6 +60,13 @@ jobs:
         run: npm audit --omit=dev --audit-level=critical
       - name: Repository-wide formatting quality gate
         run: npm run format:check
+      - name: Build and inspect isolated candidate image
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          docker build --label "org.opencontainers.image.revision=$SOURCE_SHA" -t "ms365-transfer-qa:$SOURCE_SHA" .
+          docker image inspect "ms365-transfer-qa:$SOURCE_SHA" --format 'image_id={{.Id}} source_revision={{index .Config.Labels "org.opencontainers.image.revision"}}'
+          docker run --rm --network none --entrypoint node "ms365-transfer-qa:$SOURCE_SHA" --check /app/dist/index.js
       - name: One-time full-style evidence (runner-only; no source write)
         if: failure()
         run: |
