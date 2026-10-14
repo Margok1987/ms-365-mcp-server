@@ -66,8 +66,7 @@ async function fetchUploadSessionWithThrottleRetry(
 
     const retryAfter = parseRetryAfterMs(response.headers.get('retry-after'));
     const delayMs =
-      retryAfter ??
-      backoffDelayMs(attempt, retryPolicy.baseBackoffMs, retryPolicy.maxBackoffMs);
+      retryAfter ?? backoffDelayMs(attempt, retryPolicy.baseBackoffMs, retryPolicy.maxBackoffMs);
 
     try {
       await response.arrayBuffer();
@@ -88,10 +87,7 @@ function assertUploadUrl(uploadUrl: string): void {
     throw new UploadSessionTransportError('INVALID_UPLOAD_URL', 'uploadUrl is not a valid URL.');
   }
   if (parsed.protocol !== 'https:') {
-    throw new UploadSessionTransportError(
-      'INVALID_UPLOAD_URL',
-      'uploadUrl must use HTTPS.'
-    );
+    throw new UploadSessionTransportError('INVALID_UPLOAD_URL', 'uploadUrl must use HTTPS.');
   }
   if (parsed.username || parsed.password) {
     throw new UploadSessionTransportError(
