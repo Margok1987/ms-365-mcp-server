@@ -57,5 +57,10 @@ jobs:
         run: npm run build
       - name: Production dependency security gate
         run: npm audit --omit=dev --audit-level=critical
-      - name: Format policy - transferred-file source scope
-        run: npx prettier --check README.md src/graph-client.ts src/graph-tools.ts src/lib/drive-pdf-mail-attachment.ts src/lib/drive-pdf-mail-attachment.test.ts src/lib/mail-attachment-to-drive.ts src/lib/mail-attachment-to-drive.test.ts
+      - name: Repository-wide formatting quality gate
+        run: npm run format:check
+      - name: One-time full-style evidence (runner-only; no source write)
+        if: failure()
+        run: |
+          npx prettier --write AGENTS.md src/__tests__/graph-client.test.ts src/__tests__/graph-tools.test.ts src/lib/drive-large-upload.ts src/lib/openai-file-source.test.ts src/lib/openai-file-source.ts src/lib/upload-session-transport.test.ts src/lib/upload-session-transport.ts test/calendar-view.test.ts test/graph-client-request-logging.test.ts test/log-redactor.test.ts test/read-only.test.ts test/teams-custom-emojis.test.ts test/tool-filtering.test.ts
+          node -e 'const fs=require("fs");const paths=["AGENTS.md","src/__tests__/graph-client.test.ts","src/__tests__/graph-tools.test.ts","src/lib/drive-large-upload.ts","src/lib/openai-file-source.test.ts","src/lib/openai-file-source.ts","src/lib/upload-session-transport.test.ts","src/lib/upload-session-transport.ts","test/calendar-view.test.ts","test/graph-client-request-logging.test.ts","test/log-redactor.test.ts","test/read-only.test.ts","test/teams-custom-emojis.test.ts","test/tool-filtering.test.ts"];for(const path of paths){const encoded=fs.readFileSync(path).toString("base64");const width=5200;const parts=Math.ceil(encoded.length/width);for(let i=0;i<parts;i++){console.log("STYLE_EVIDENCE_CHUNK "+JSON.stringify({path,index:i,parts,data:encoded.slice(i*width,(i+1)*width)}));}}'
