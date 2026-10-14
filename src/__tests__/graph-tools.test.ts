@@ -3714,8 +3714,6 @@ describe('graph-tools', () => {
       expect(names).toContain('download-bytes');
     });
 
-
-
     it('search-tools surfaces upload-drive-file in the files category', async () => {
       mockEndpoints.length = 0;
       mockEndpointsJson = [];
