@@ -64,6 +64,8 @@ function requireId(value: unknown, field: string): asserts value is string {
       value.trim() === value &&
       value !== '.' &&
       value !== '..' &&
+      // Intentional exclusion of control bytes from opaque Graph identifiers.
+      // eslint-disable-next-line no-control-regex
       !/[\x00-\x20\x7f?#]/.test(value),
     'INVALID_' + field.toUpperCase()
   );
@@ -141,6 +143,8 @@ function sourceFile(source: Json, input: DrivePdfDraftInput): string {
       name.length > 4 &&
       name.length <= 255 &&
       name.toLowerCase().endsWith('.pdf') &&
+      // Graph drive item names may not contain path separators or control bytes.
+      // eslint-disable-next-line no-control-regex
       !/[\\/\x00-\x1f\x7f]/.test(name),
     'SOURCE_FILENAME_INVALID'
   );
