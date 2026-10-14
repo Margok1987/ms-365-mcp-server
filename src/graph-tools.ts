@@ -18,6 +18,7 @@ import { api } from './generated/client.js';
 import GraphClient, { getBlobMaxBytes, isBlobOutputEnabled } from './graph-client.js';
 import { getAttachmentMinting } from './lib/attachment-minting.js';
 import { MAX_UPLOAD_BYTES, uploadAttachment } from './lib/attachment-upload.js';
+import { downloadHostFile, type HostFileParam } from './lib/host-file-param.js';
 import { getUploadDirs, openUploadFile, type UploadFile } from './lib/upload-dirs.js';
 import {
   buildAttachmentUrl,
@@ -860,6 +861,7 @@ interface UtilityToolContext {
   multiAccount: boolean;
   accountNames: string[];
   userFields?: string[];
+  hostFileDownloader?: typeof downloadHostFile;
 }
 
 interface UtilityTool {
@@ -870,9 +872,12 @@ interface UtilityTool {
   path: string;
   description: string;
   searchKeywords?: string;
+  /** Top-level MCP inputs that a compatible host should populate as file objects. */
+  fileParams?: string[];
   buildSchema: (ctx: UtilityToolContext) => Record<string, z.ZodTypeAny>;
   execute: (params: Record<string, unknown>, ctx: UtilityToolContext) => Promise<CallToolResult>;
   readOnlyHint?: boolean;
+  destructiveHint?: boolean;
   openWorldHint?: boolean;
   // When true, this tool reads or writes the server's local filesystem and is only
   // registered in stdio mode, or over HTTP with --http-local-file-tools.
@@ -1075,6 +1080,14 @@ async function checkAccountParamInBearerMode(
  */
 const UPLOAD_TARGET = /^(\/me|\/users\/[^/]+)\/(messages|events)\/[^/]+\/attachments$/;
 const UPLOAD_CONTENT_TYPE = /^[\w.+-]+\/[\w.+-]+$/;
+const HOST_FILE_PARAM_SCHEMA = z
+  .object({
+    download_url: z.string(),
+    file_id: z.string(),
+    mime_type: z.string().optional(),
+    file_name: z.string().optional(),
+  })
+  .strict();
 
 const UPLOAD_TARGET_ERROR =
   'target must be the attachments collection of a draft message or an event: /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.';
@@ -1277,11 +1290,13 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     method: 'PUT',
     path: 'tool:get-upload-url',
     searchKeywords:
-      'upload attachment attach file draft email attach file event large attachment send file out-of-band upload url',
+      'upload attachment attach file draft email attach file event large attachment ChatGPT host file out-of-band upload url',
     description:
-      'Mint a short-lived, single-use URL that this server serves for uploading a file as an attachment to a draft message or an event, so the bytes go straight from the caller to Microsoft Graph instead of passing as base64 through the agent context. target is the attachments collection of the item: /me/messages/{message-id}/attachments (a draft; create it first) or /me/events/{event-id}/attachments. PUT the raw file bytes to the returned uploadUrl with a Content-Length (e.g. curl -T file "<uploadUrl>"); the response confirms the attachment. Files under 3 MB are attached directly, larger ones (up to 150 MB) through a Graph upload session. Requires --enable-attachment-urls. Returns { uploadUrl, method, expiresAt, singleUse, maxBytes }.',
+      'Upload an attachment to a draft message or event without passing file bytes as base64 through the agent context. If the MCP host supplies file, this existing tool downloads that host file and attaches it immediately. Without file it preserves the existing behavior and returns a short-lived single-use uploadUrl for a caller-side raw PUT. target is /me/messages/{message-id}/attachments for a draft or /me/events/{event-id}/attachments. Files under 3 MB are attached directly; larger files up to 150 MB use a Graph upload session. Requires --enable-attachment-urls.',
     readOnlyHint: false,
+    destructiveHint: true,
     openWorldHint: true,
+    fileParams: ['file'],
     buildSchema: (ctx) => {
       const schema: Record<string, z.ZodTypeAny> = {
         target: z
@@ -1296,8 +1311,11 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           .string()
           .optional()
           .describe(
-            'MIME type of the file, e.g. application/pdf. Defaults to application/octet-stream.'
+            'MIME type of the file, e.g. application/pdf. With a host file, defaults to its MIME metadata or download response Content-Type; otherwise application/octet-stream.'
           ),
+        file: HOST_FILE_PARAM_SCHEMA.optional().describe(
+          'Optional host-provided file object. ChatGPT supplies download_url and file_id; mime_type and file_name may also be present. When supplied, this tool attaches the file directly instead of returning an upload URL.'
+        ),
       };
       if (ctx.multiAccount) {
         schema['account'] = z
@@ -1309,26 +1327,96 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
       }
       return schema;
     },
-    execute: async (params, { authManager }) => {
+    execute: async (params, { graphClient, authManager, hostFileDownloader }) => {
       const target = params.target;
-      const name = params.name;
+      const rawName = params.name;
+      const accountParam = params.account as string | undefined;
       if (typeof target !== 'string' || target.length === 0) {
         return uploadError('target is required and must be a non-empty string.');
       }
-      if (typeof name !== 'string' || name.length === 0) {
+      if (typeof rawName !== 'string' || rawName.length === 0) {
         return uploadError('name is required and must be a non-empty string.');
       }
-      const contentType =
+
+      const parsedFile =
+        params.file === undefined ? undefined : HOST_FILE_PARAM_SCHEMA.safeParse(params.file);
+      if (parsedFile && !parsedFile.success) {
+        return uploadError(
+          'file must contain download_url and file_id, with optional mime_type and file_name.'
+        );
+      }
+
+      if (!parsedFile) {
+        const contentType =
+          typeof params.contentType === 'string' && params.contentType.length > 0
+            ? params.contentType
+            : 'application/octet-stream';
+        return mintUploadUrl(target, rawName, contentType, accountParam, authManager);
+      }
+
+      if (!UPLOAD_TARGET.test(target) || !isPlainGraphPath(target)) {
+        return uploadError(UPLOAD_TARGET_ERROR);
+      }
+
+      const hostFile = parsedFile.data as HostFileParam;
+      const accountModeError = await checkAccountParamInBearerMode(accountParam, authManager);
+      if (accountModeError) return uploadError(accountModeError);
+
+      const name = cleanAttachmentName(rawName);
+      if (!name) return uploadError('name is required.');
+
+      const requestedContentType =
         typeof params.contentType === 'string' && params.contentType.length > 0
           ? params.contentType
-          : 'application/octet-stream';
-      return mintUploadUrl(
-        target,
-        name,
-        contentType,
-        params.account as string | undefined,
-        authManager
-      );
+          : hostFile.mime_type;
+      if (requestedContentType && !UPLOAD_CONTENT_TYPE.test(requestedContentType)) {
+        return uploadError('contentType must be a MIME type such as application/pdf.');
+      }
+
+      let accountAccessToken: string | undefined;
+      if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+        accountAccessToken = await authManager.getTokenForAccount(accountParam);
+      }
+
+      let downloaded: Awaited<ReturnType<typeof downloadHostFile>> | undefined;
+      try {
+        downloaded = await (hostFileDownloader ?? downloadHostFile)(hostFile, MAX_UPLOAD_BYTES);
+        const contentType =
+          requestedContentType && UPLOAD_CONTENT_TYPE.test(requestedContentType)
+            ? requestedContentType
+            : downloaded.contentType && UPLOAD_CONTENT_TYPE.test(downloaded.contentType)
+              ? downloaded.contentType
+              : 'application/octet-stream';
+        const created = await uploadAttachment(
+          graphClient,
+          { target, name, contentType, size: downloaded.size, accessToken: accountAccessToken },
+          downloaded.handle.createReadStream({
+            autoClose: false,
+            highWaterMark: 1024 * 1024,
+            end: downloaded.size - 1,
+          })
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                name,
+                size: downloaded.size,
+                ...(created.id ? { id: created.id } : {}),
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        const metadata = thrownErrorAuditFields(error);
+        return {
+          ...uploadError((error as Error).message),
+          ...(Object.keys(metadata).length > 0 ? { _meta: metadata } : {}),
+        };
+      } finally {
+        await downloaded?.cleanup();
+      }
     },
   },
   {
@@ -2070,14 +2158,38 @@ function registerUtilityToolWithMcp(
   utility: UtilityTool,
   ctx: UtilityToolContext
 ): void {
-  server.tool(
+  if (!utility.fileParams?.length) {
+    server.tool(
+      utility.name,
+      utility.description,
+      utility.buildSchema(ctx),
+      {
+        title: utility.name,
+        readOnlyHint: utility.readOnlyHint ?? true,
+        ...(utility.destructiveHint !== undefined
+          ? { destructiveHint: utility.destructiveHint }
+          : {}),
+        openWorldHint: utility.openWorldHint ?? true,
+      },
+      async (params) => executeUtilityTool(utility, ctx, params)
+    );
+    return;
+  }
+
+  server.registerTool(
     utility.name,
-    utility.description,
-    utility.buildSchema(ctx),
     {
       title: utility.name,
-      readOnlyHint: utility.readOnlyHint ?? true,
-      openWorldHint: utility.openWorldHint ?? true,
+      description: utility.description,
+      inputSchema: z.object(utility.buildSchema(ctx)),
+      annotations: {
+        readOnlyHint: utility.readOnlyHint ?? true,
+        ...(utility.destructiveHint !== undefined
+          ? { destructiveHint: utility.destructiveHint }
+          : {}),
+        openWorldHint: utility.openWorldHint ?? true,
+      },
+      _meta: { 'openai/fileParams': utility.fileParams },
     },
     async (params) => executeUtilityTool(utility, ctx, params)
   );
@@ -3630,6 +3742,7 @@ export function registerDiscoveryTools(
         method: utility.method,
         path: utility.path,
         description: utility.description,
+        ...(utility.fileParams?.length ? { fileParams: utility.fileParams } : {}),
       };
     }
     return null;
@@ -3731,27 +3844,49 @@ export function registerDiscoveryTools(
     }
   );
 
-  server.tool(
+  server.registerTool(
     'execute-tool',
-    'Execute a Microsoft Graph API tool by name. Workflow: search-tools → get-tool-schema → execute-tool. Call get-tool-schema first for any tool you have not seen before — passing the wrong shape to parameters will fail validation or return a Graph 400. For list endpoints, prefer modest $top plus $select.',
-    {
-      tool_name: z.string().describe('Name of the tool to execute (e.g., "list-mail-messages")'),
-      parameters: z
-        .record(z.any())
-        .describe(
-          'Parameters shaped per get-tool-schema. Path/query/header params go at the top level; request bodies go under "body".'
-        )
-        .optional(),
-    },
     {
       title: 'execute-tool',
-      readOnlyHint: false,
-      destructiveHint: true,
-      openWorldHint: true,
+      description:
+        'Execute a Microsoft Graph API tool by name. Workflow: search-tools → get-tool-schema → execute-tool. Call get-tool-schema first for any tool you have not seen before. For a utility whose schema reports a File parameter, pass the host file through the top-level file field instead of nesting it inside parameters.',
+      inputSchema: z.object({
+        tool_name: z.string().describe('Name of the tool to execute (e.g., "list-mail-messages")'),
+        parameters: z
+          .record(z.any())
+          .describe(
+            'Parameters shaped per get-tool-schema. Path/query/header params go at the top level; request bodies go under "body". Host file parameters do not go here.'
+          )
+          .optional(),
+        file: HOST_FILE_PARAM_SCHEMA.optional().describe(
+          'Optional host-provided file object. Use only when get-tool-schema reports a File parameter named file.'
+        ),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+      _meta: { 'openai/fileParams': ['file'] },
     },
-    async ({ tool_name, parameters = {} }) => {
+    async ({ tool_name, parameters = {}, file }) => {
       const toolData = toolsRegistry.get(tool_name);
       if (toolData) {
+        if (file !== undefined) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'tool_does_not_accept_file',
+                  tool: tool_name,
+                  tip: 'Pass file only for a utility whose get-tool-schema response reports a File parameter.',
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
         return executeGraphTool(
           toolData.tool,
           toolData.config,
@@ -3763,7 +3898,40 @@ export function registerDiscoveryTools(
       }
       const utility = utilityByName.get(tool_name);
       if (utility) {
-        return executeUtilityTool(utility, utilityCtx, parameters);
+        const acceptsFile = utility.fileParams?.includes('file') ?? false;
+        if (Object.prototype.hasOwnProperty.call(parameters, 'file') && acceptsFile) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'file_must_be_top_level',
+                  tool: tool_name,
+                  tip: 'Pass the ChatGPT/MCP file through execute-tool.file, not parameters.file.',
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+        if (file !== undefined && !acceptsFile) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'tool_does_not_accept_file',
+                  tool: tool_name,
+                  tip: 'Pass file only for a utility whose get-tool-schema response reports a File parameter.',
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+        const utilityParams =
+          file !== undefined && acceptsFile ? { ...parameters, file } : parameters;
+        return executeUtilityTool(utility, utilityCtx, utilityParams);
       }
       const deniedPolicy = deniedTools.get(tool_name);
       if (deniedPolicy) {

@@ -208,11 +208,13 @@ interface UtilityDescriptor {
   method: string;
   path: string;
   description: string;
+  fileParams?: string[];
   buildSchema: (ctx: never) => Record<string, z.ZodTypeAny>;
 }
 
-// Params reported as `Query` (top-level): execute-tool passes `parameters`
-// straight to utility.execute(); `Body` would mislead LLMs into nesting under `body`.
+// Ordinary utility params are reported as `Query` (top-level inside execute-tool.parameters).
+// Host file params are different: discovery clients pass them through execute-tool's top-level
+// MCP file field, never nested in JSON parameters.
 export function describeUtilityToolSchema<C>(
   utility: UtilityDescriptor & { buildSchema: (ctx: C) => Record<string, z.ZodTypeAny> },
   ctx: C
@@ -221,22 +223,24 @@ export function describeUtilityToolSchema<C>(
   method: string;
   path: string;
   description: string;
+  fileParams?: string[];
   parameters: Array<{
     name: string;
-    in: 'Query';
+    in: 'Query' | 'File';
     required: boolean;
     description?: string;
     schema: unknown;
   }>;
 } {
   const schemaMap = utility.buildSchema(ctx);
+  const fileParams = new Set(utility.fileParams ?? []);
   const params = Object.entries(schemaMap).map(([name, zodSchema]) => {
     const { inner, optional } = unwrapOptional(zodSchema);
     const jsonSchema = zodToJsonSchema(inner, { target: 'jsonSchema7', $refStrategy: 'none' });
     const { $schema: _s, ...schema } = jsonSchema as Record<string, unknown>;
     return {
       name,
-      in: 'Query' as const,
+      in: fileParams.has(name) ? ('File' as const) : ('Query' as const),
       required: !optional,
       description: zodSchema.description,
       schema,
@@ -247,6 +251,7 @@ export function describeUtilityToolSchema<C>(
     method: utility.method,
     path: utility.path,
     description: utility.description,
+    ...(utility.fileParams?.length ? { fileParams: utility.fileParams } : {}),
     parameters: params,
   };
 }
