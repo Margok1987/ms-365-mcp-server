@@ -9,6 +9,8 @@ on:
       - "src/lib/mail-attachment-to-drive.test.ts"
       - "src/graph-tools.ts"
       - "src/graph-client.ts"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/verify-drive-pdf-draft.yml"
   pull_request:
     paths:
@@ -18,6 +20,8 @@ on:
       - "src/lib/mail-attachment-to-drive.test.ts"
       - "src/graph-tools.ts"
       - "src/graph-client.ts"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/verify-drive-pdf-draft.yml"
 
 concurrency:
