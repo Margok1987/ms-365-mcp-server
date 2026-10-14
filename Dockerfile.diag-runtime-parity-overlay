@@ -1,0 +1,14 @@
+FROM ms365-softeria-fork:f4034f9
+
+WORKDIR /app
+
+RUN npm pkg set version=0.165.0-fork.1 \
+    && npm install --save-exact --ignore-scripts --omit=dev \
+         @modelcontextprotocol/sdk@1.32.1 \
+         zod-to-json-schema@3.25.2 \
+    && npm cache clean --force
+
+LABEL org.opencontainers.image.revision="f4034f9af77e324a751136895020651e3ca1bcff" \
+      org.opencontainers.image.title="WWW Microsoft 365 MCP fileParams runtime-parity overlay"
+
+ENTRYPOINT ["node", "dist/index.js"]
