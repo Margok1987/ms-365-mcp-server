@@ -868,10 +868,8 @@ function utilityEnabled(utility: UtilityTool, allowedScopesValue?: string): bool
   if (utility.enableEnv && process.env[utility.enableEnv] !== 'true') return false;
   if (!utility.scopeGroups) return true;
   return (
-    getMissingAllowedScopesForGroups(
-      utility.scopeGroups,
-      parseAllowedScopes(allowedScopesValue)
-    ).length === 0
+    getMissingAllowedScopesForGroups(utility.scopeGroups, parseAllowedScopes(allowedScopesValue))
+      .length === 0
   );
 }
 
@@ -1171,7 +1169,10 @@ const OPENAI_FILE_PARAM_SCHEMA = z
   })
   .strict();
 
-function parseGraphUtilityJson(response: CallToolResult, operation: string): Record<string, unknown> {
+function parseGraphUtilityJson(
+  response: CallToolResult,
+  operation: string
+): Record<string, unknown> {
   if (response.isError) {
     const text =
       response.content.find((item): item is TextContent => item.type === 'text')?.text ??
@@ -1244,7 +1245,9 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           .describe('Optional destination file name override. Defaults to file.file_name.'),
         confirm: z
           .literal(true)
-          .describe('Required explicit confirmation. Must be true before any upload session is created.'),
+          .describe(
+            'Required explicit confirmation. Must be true before any upload session is created.'
+          ),
       };
       if (ctx.multiAccount) {
         schema['account'] = z
@@ -1298,7 +1301,9 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
       }
       if (fileNameOverride !== undefined && typeof fileNameOverride !== 'string') {
         return {
-          content: [{ type: 'text', text: JSON.stringify({ error: 'fileName must be a string.' }) }],
+          content: [
+            { type: 'text', text: JSON.stringify({ error: 'fileName must be a string.' }) },
+          ],
           isError: true,
         };
       }
@@ -1327,7 +1332,11 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             accessToken: accountAccessToken,
             forceJsonOutput: true,
           })) as CallToolResult;
-          if (allow404 && response.isError && auditHttpStatus(response._meta?.http_status) === 404) {
+          if (
+            allow404 &&
+            response.isError &&
+            auditHttpStatus(response._meta?.http_status) === 404
+          ) {
             return null;
           }
           return parseGraphUtilityJson(response, endpoint);
@@ -1341,11 +1350,14 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             ...(fileNameOverride ? { fileName: fileNameOverride } : {}),
           },
           {
-            createUploadSession: async ({ driveId: targetDrive, parentItemId: targetParent, fileName }) => {
-              const destinationPath =
-                `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
-                  targetParent
-                )}:/${encodeURIComponent(fileName)}`;
+            createUploadSession: async ({
+              driveId: targetDrive,
+              parentItemId: targetParent,
+              fileName,
+            }) => {
+              const destinationPath = `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
+                targetParent
+              )}:/${encodeURIComponent(fileName)}`;
               const response = await graphJson(`${destinationPath}:/createUploadSession`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1358,11 +1370,14 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
               });
               return { uploadUrl: String(response?.uploadUrl ?? '') };
             },
-            readDestination: async ({ driveId: targetDrive, parentItemId: targetParent, fileName }) => {
-              const destinationPath =
-                `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
-                  targetParent
-                )}:/${encodeURIComponent(fileName)}`;
+            readDestination: async ({
+              driveId: targetDrive,
+              parentItemId: targetParent,
+              fileName,
+            }) => {
+              const destinationPath = `/drives/${encodeURIComponent(targetDrive)}/items/${encodeURIComponent(
+                targetParent
+              )}:/${encodeURIComponent(fileName)}`;
               return (await graphJson(
                 `${destinationPath}?$select=id,name,size,parentReference,file`,
                 {},
@@ -1416,15 +1431,21 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         driveId: z.string().min(1).describe('Exact OneDrive/SharePoint drive ID.'),
         driveItemId: z.string().min(1).describe('Existing PDF driveItem ID; never a URL.'),
         messageId: z.string().min(1).describe('Existing immutable ID of one unsent /me draft.'),
-        expectedParentFolderId: z.string().min(1).describe('Current native draft parent folder ID.'),
+        expectedParentFolderId: z
+          .string()
+          .min(1)
+          .describe('Current native draft parent folder ID.'),
         expectedChangeKey: z.string().min(1).describe('Fresh current draft changeKey.'),
         expectedSourceETag: z.string().min(1).describe('Fresh original PDF driveItem eTag.'),
-        confirm: z.literal(true).describe('Explicit authorization for one draft-only file attachment.'),
+        confirm: z
+          .literal(true)
+          .describe('Explicit authorization for one draft-only file attachment.'),
       };
       if (ctx.multiAccount) {
-        schema.account = z.string().optional().describe(
-          'Current selected account, never a switch from an OAuth/bearer principal.'
-        );
+        schema.account = z
+          .string()
+          .optional()
+          .describe('Current selected account, never a switch from an OAuth/bearer principal.');
       }
       return schema;
     },
@@ -1452,13 +1473,18 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           accessToken = await authManager.getTokenForAccount(account);
         }
         const sourcePath =
-          '/drives/' + encodeURIComponent(input.driveId) +
-          '/items/' + encodeURIComponent(input.driveItemId);
+          '/drives/' +
+          encodeURIComponent(input.driveId) +
+          '/items/' +
+          encodeURIComponent(input.driveItemId);
         const mailPath = '/me/messages/' + encodeURIComponent(input.messageId);
         const prefer = { Prefer: 'IdType="ImmutableId"' };
         const readJson = async (endpoint: string) => {
           const result = await graphClient.graphRequest(endpoint, {
-            accessToken, headers: prefer, forceJsonOutput: true, preserveODataMetadata: true,
+            accessToken,
+            headers: prefer,
+            forceJsonOutput: true,
+            preserveODataMetadata: true,
           });
           return parseGraphUtilityJson(result, endpoint);
         };
@@ -1489,26 +1515,31 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           mailPath + '/attachments?$top=100&$select=id,name,contentType,isInline,contentId,size';
         const result = await attachDrivePdfToMailDraft(input, {
           readActor: () => readJson('/me?$select=id'),
-          readSource: () => readJson(sourcePath + '?$select=id,name,size,eTag,file,parentReference'),
-          readDraft: () => readJson(
-            mailPath +
-              '?$select=id,isDraft,parentFolderId,changeKey,subject,body,toRecipients,ccRecipients,bccRecipients,replyTo,from,sender,conversationId,internetMessageId'
-          ),
+          readSource: () =>
+            readJson(sourcePath + '?$select=id,name,size,eTag,file,parentReference'),
+          readDraft: () =>
+            readJson(
+              mailPath +
+                '?$select=id,isDraft,parentFolderId,changeKey,subject,body,toRecipients,ccRecipients,bccRecipients,replyTo,from,sender,conversationId,internetMessageId'
+            ),
           listAttachments: () => readJson(listPath),
-          readSourceBytes: (maxBytes, etag) =>
-            readBytes(sourcePath + '/content', maxBytes, etag),
+          readSourceBytes: (maxBytes, etag) => readBytes(sourcePath + '/content', maxBytes, etag),
           readAttachmentBytes: (id, maxBytes) =>
             readBytes(mailPath + '/attachments/' + encodeURIComponent(id) + '/$value', maxBytes),
           appendFile: async (file) => {
             const ack = await graphClient.graphRequest(mailPath + '/attachments', {
-              accessToken, method: 'POST',
+              accessToken,
+              method: 'POST',
               headers: { ...prefer, 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 '@odata.type': '#microsoft.graph.fileAttachment',
-                name: file.name, contentType: 'application/pdf',
-                isInline: false, contentBytes: file.contentBytes,
+                name: file.name,
+                contentType: 'application/pdf',
+                isInline: false,
+                contentBytes: file.contentBytes,
               }),
-              forceJsonOutput: true, preserveODataMetadata: true,
+              forceJsonOutput: true,
+              preserveODataMetadata: true,
             });
             return {
               status: Number(ack._meta?.http_status),
@@ -1521,15 +1552,20 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           _meta: { result_count: 1, result_bytes: result.decodedBytes },
         };
       } catch (error) {
-        const code = error instanceof DrivePdfDraftError
-          ? error.code : 'DRIVE_PDF_DRAFT_ERROR';
+        const code = error instanceof DrivePdfDraftError ? error.code : 'DRIVE_PDF_DRAFT_ERROR';
         return {
-          content: [{ type: 'text', text: JSON.stringify({
-            error: code,
-            possibleWrite: error instanceof DrivePdfDraftError && error.possibleWrite,
-            ...(error instanceof DrivePdfDraftError && error.attemptId
-              ? { attemptId: error.attemptId } : {}),
-          }) }],
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: code,
+                possibleWrite: error instanceof DrivePdfDraftError && error.possibleWrite,
+                ...(error instanceof DrivePdfDraftError && error.attemptId
+                  ? { attemptId: error.attemptId }
+                  : {}),
+              }),
+            },
+          ],
           isError: true,
         };
       }
@@ -1564,12 +1600,15 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         driveId: z.string().min(1).describe('Destination OneDrive/SharePoint drive ID.'),
         parentItemId: z.string().min(1).describe('Destination folder driveItem ID.'),
         expectedParentETag: z.string().min(1).describe('Fresh destination folder eTag.'),
-        confirm: z.literal(true).describe('Explicit permission to create one new destination file only.'),
+        confirm: z
+          .literal(true)
+          .describe('Explicit permission to create one new destination file only.'),
       };
       if (ctx.multiAccount) {
-        schema.account = z.string().optional().describe(
-          'Currently selected delegated account; never a cross-account migration.'
-        );
+        schema.account = z
+          .string()
+          .optional()
+          .describe('Currently selected delegated account; never a cross-account migration.');
       }
       return schema;
     },
@@ -1597,14 +1636,10 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
           accessToken = await authManager.getTokenForAccount(account);
         }
-        const mailPath =
-          '/me/messages/' + encodeURIComponent(input.messageId);
-        const attachmentPath =
-          mailPath + '/attachments/' + encodeURIComponent(input.attachmentId);
-        const drivePath =
-          '/drives/' + encodeURIComponent(input.driveId);
-        const folderPath =
-          drivePath + '/items/' + encodeURIComponent(input.parentItemId);
+        const mailPath = '/me/messages/' + encodeURIComponent(input.messageId);
+        const attachmentPath = mailPath + '/attachments/' + encodeURIComponent(input.attachmentId);
+        const drivePath = '/drives/' + encodeURIComponent(input.driveId);
+        const folderPath = drivePath + '/items/' + encodeURIComponent(input.parentItemId);
         const prefer = { Prefer: 'IdType="ImmutableId"' };
         const graphJson = async (
           endpoint: string,
@@ -1618,11 +1653,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             forceJsonOutput: true,
             preserveODataMetadata: true,
           });
-          if (
-            allow404 &&
-            answer.isError &&
-            auditHttpStatus(answer._meta?.http_status) === 404
-          ) return null;
+          if (allow404 && answer.isError && auditHttpStatus(answer._meta?.http_status) === 404)
+            return null;
           return parseGraphUtilityJson(answer, endpoint);
         };
         const readJson = async (endpoint: string) => {
@@ -1661,39 +1693,32 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           folderPath + ':/' + encodeURIComponent(filename);
         const result = await saveMailAttachmentToDrive(input, {
           readActor: () => readJson('/me?$select=id'),
-          readMessage: () => readJson(
-            mailPath +
-              '?$select=id,changeKey,parentFolderId,subject,isDraft,isRead,body,toRecipients,ccRecipients,bccRecipients,conversationId,hasAttachments'
-          ),
-          readAttachment: () => readJson(
-            attachmentPath + '?$select=id,name,size,contentType,isInline'
-          ),
-          readAttachmentBytes: (max) =>
-            readBytes(attachmentPath + '/$value', max),
-          readParent: () => readJson(
-            folderPath + '?$select=id,name,eTag,folder,parentReference'
-          ),
+          readMessage: () =>
+            readJson(
+              mailPath +
+                '?$select=id,changeKey,parentFolderId,subject,isDraft,isRead,body,toRecipients,ccRecipients,bccRecipients,conversationId,hasAttachments'
+            ),
+          readAttachment: () =>
+            readJson(attachmentPath + '?$select=id,name,size,contentType,isInline'),
+          readAttachmentBytes: (max) => readBytes(attachmentPath + '/$value', max),
+          readParent: () => readJson(folderPath + '?$select=id,name,eTag,folder,parentReference'),
           readDestination: (filename) =>
             graphJson(
-              destinationPath(filename) +
-                '?$select=id,name,size,file,parentReference,eTag',
+              destinationPath(filename) + '?$select=id,name,size,file,parentReference,eTag',
               {},
               true
             ),
           createUploadSession: async (filename) => {
-            const created = await graphJson(
-              destinationPath(filename) + ':/createUploadSession',
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  item: {
-                    '@microsoft.graph.conflictBehavior': 'fail',
-                    name: filename,
-                  },
-                }),
-              }
-            );
+            const created = await graphJson(destinationPath(filename) + ':/createUploadSession', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                item: {
+                  '@microsoft.graph.conflictBehavior': 'fail',
+                  name: filename,
+                },
+              }),
+            });
             return { uploadUrl: String(created?.uploadUrl ?? '') };
           },
           uploadSession: async (uploadUrl, bytes) => {
@@ -1711,10 +1736,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             };
           },
           readDriveBytes: (itemId, max) =>
-            readBytes(
-              drivePath + '/items/' + encodeURIComponent(itemId) + '/content',
-              max
-            ),
+            readBytes(drivePath + '/items/' + encodeURIComponent(itemId) + '/content', max),
         });
         return {
           content: [{ type: 'text', text: JSON.stringify(result) }],
@@ -1722,14 +1744,21 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         };
       } catch (error) {
         return {
-          content: [{ type: 'text', text: JSON.stringify({
-            error: error instanceof MailAttachmentToDriveError
-              ? error.code : 'MAIL_ATTACHMENT_TO_DRIVE_ERROR',
-            possibleWrite:
-              error instanceof MailAttachmentToDriveError && error.possibleWrite,
-            ...(error instanceof MailAttachmentToDriveError && error.attemptId
-              ? { attemptId: error.attemptId } : {}),
-          }) }],
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  error instanceof MailAttachmentToDriveError
+                    ? error.code
+                    : 'MAIL_ATTACHMENT_TO_DRIVE_ERROR',
+                possibleWrite: error instanceof MailAttachmentToDriveError && error.possibleWrite,
+                ...(error instanceof MailAttachmentToDriveError && error.attemptId
+                  ? { attemptId: error.attemptId }
+                  : {}),
+              }),
+            },
+          ],
           isError: true,
         };
       }
