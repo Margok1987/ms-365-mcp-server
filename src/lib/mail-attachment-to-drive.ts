@@ -245,9 +245,11 @@ export async function saveMailAttachmentToDrive(
     bytes.length > 0 && bytes.length <= MAX_MAIL_TO_DRIVE_BYTES,
     'SOURCE_BYTES_OUT_OF_BOUNDS'
   );
+  const originalMetadataSize = originalAttachment.size;
   requireFact(
-    originalAttachment.size >= bytes.length &&
-      originalAttachment.size - bytes.length <= MAX_METADATA_OVERHEAD,
+    typeof originalMetadataSize === 'number' &&
+      originalMetadataSize >= bytes.length &&
+      originalMetadataSize - bytes.length <= MAX_METADATA_OVERHEAD,
     'SOURCE_METADATA_SIZE_MISMATCH'
   );
   const expectedHash = sha256(bytes);
