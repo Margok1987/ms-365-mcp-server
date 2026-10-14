@@ -124,10 +124,7 @@ function verifyReadback(
       'Exact destination readback belongs to a different drive.'
     );
   }
-  if (
-    item.parentReference?.id !== undefined &&
-    item.parentReference.id !== expected.parentItemId
-  ) {
+  if (item.parentReference?.id !== undefined && item.parentReference.id !== expected.parentItemId) {
     throw new LargeDriveUploadError(
       'UPLOAD_PARENT_MISMATCH',
       'Exact destination readback belongs to a different parent folder.'
@@ -174,8 +171,7 @@ export async function uploadOpenAIFileToDrive(
       source: staged.open(),
       fetchImpl: deps.fetchImpl,
     });
-    const finalId =
-      typeof uploaded.driveItem.id === 'string' ? uploaded.driveItem.id : undefined;
+    const finalId = typeof uploaded.driveItem.id === 'string' ? uploaded.driveItem.id : undefined;
     const readback = verifyReadback(
       await deps.readDestination({ driveId, parentItemId, fileName }),
       { driveId, parentItemId, fileName, size: staged.size, finalItemId: finalId }
