@@ -1,0 +1,20 @@
+FROM ms365-softeria-fork:f4034f9 AS fork
+
+FROM node:22-bookworm-slim
+WORKDIR /app
+
+RUN npm install --ignore-scripts --omit=dev \
+    @softeria/ms-365-mcp-server@0.165.0 \
+    && npm cache clean --force
+
+COPY --from=fork /app/dist/graph-tools.js \
+  /app/node_modules/@softeria/ms-365-mcp-server/dist/graph-tools.js
+COPY --from=fork /app/dist/lib/host-file-param.js \
+  /app/node_modules/@softeria/ms-365-mcp-server/dist/lib/host-file-param.js
+COPY --from=fork /app/dist/lib/tool-schema.js \
+  /app/node_modules/@softeria/ms-365-mcp-server/dist/lib/tool-schema.js
+
+LABEL org.opencontainers.image.revision="f4034f9af77e324a751136895020651e3ca1bcff" \
+      org.opencontainers.image.title="Softeria 0.165.0 + minimal ChatGPT fileParams patch diagnostic"
+
+ENTRYPOINT ["node", "/app/node_modules/@softeria/ms-365-mcp-server/dist/index.js"]
