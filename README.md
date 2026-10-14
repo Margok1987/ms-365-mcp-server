@@ -690,7 +690,7 @@ The caller supplies `driveId`, `driveItemId`, immutable `messageId`,
 `expectedSourceETag` and `confirm: true`. No PDF bytes, arbitrary URL,
 SMTP recipients, alternate account or body rewrite is accepted as a parameter.
 The utility uses the currently authenticated Graph account to retrieve one
-existing OneDrive PDF and attach it as a *real* fileAttachment to one existing
+existing OneDrive PDF and attach it as a _real_ fileAttachment to one existing
 unsent `/me` draft. The source bytes never appear in the model-visible tool
 arguments or successful result. Microsoft Graph still uses its normal under-3-MB
 fileAttachment POST; the 3-MB upload-session API and referenceAttachment links
@@ -714,7 +714,7 @@ reads the same draft and attachment collection, checks the exact new PDF bytes
 and verifies all prior attachment bytes and draft composition remain unchanged.
 Its result contains only IDs, file name, original byte size, SHA-256,
 retained-child count and `sent:false`. This is a
-*read-then-write* guard, **not** a provider-atomic `If-Match` for the
+_read-then-write_ guard, **not** a provider-atomic `If-Match` for the
 attachment POST itself. Any uncertain POST or failed post-write verification
 returns a possible-write/no-replay error; no automatic retry, deletion,
 send, permission change or replacement is made.
