@@ -2,10 +2,7 @@ import { mkdtemp, readFile, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  assertSafeFileDownloadUrl,
-  stageOpenAIFile,
-} from './openai-file-source.js';
+import { assertSafeFileDownloadUrl, stageOpenAIFile } from './openai-file-source.js';
 
 async function collect(source: AsyncIterable<Uint8Array>): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -70,11 +67,12 @@ describe('OpenAI file-param source', () => {
   });
 
   it('rejects a redirect to a private target', async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response(null, {
-        status: 302,
-        headers: { location: 'https://127.0.0.1/private' },
-      })
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://127.0.0.1/private' },
+        })
     );
     await expect(
       stageOpenAIFile(
