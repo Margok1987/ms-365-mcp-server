@@ -71,9 +71,7 @@ function isPrivateIpv6(host: string): boolean {
   );
 }
 
-export type LookupAll = (
-  hostname: string
-) => Promise<Array<{ address: string; family: number }>>;
+export type LookupAll = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
 const defaultLookupAll: LookupAll = async (hostname) =>
   lookup(hostname, { all: true, verbatim: true });
@@ -223,10 +221,7 @@ export async function stageOpenAIFile(
     const nodeStream = Readable.fromWeb(
       response.body as unknown as import('stream/web').ReadableStream<Uint8Array>
     );
-    await pipeline(
-      nodeStream,
-      createWriteStream(filePath, { flags: 'wx', mode: 0o600 })
-    );
+    await pipeline(nodeStream, createWriteStream(filePath, { flags: 'wx', mode: 0o600 }));
     const info = await stat(filePath);
     if (info.size <= 0) {
       throw new OpenAIFileSourceError('EMPTY_FILE', 'Zero-byte uploads are not supported.');
