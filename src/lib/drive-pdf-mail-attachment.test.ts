@@ -133,7 +133,8 @@ function fixture(options: FixtureOptions = {}) {
     appendFile: async (file) => {
       posts += 1;
       expect(file.name).toBe(fileName);
-      expect(Buffer.from(file.contentBytes, 'base64')).toEqual(pdf);
+      // Exact full-byte equality without Vitest expanding every byte into object entries.
+      expect(Buffer.from(file.contentBytes, 'base64').equals(pdf)).toBe(true);
       applied = true;
       if (options.throwPost) throw new Error('connection lost after possible Graph success');
       if (options.badAcknowledgement) return {
