@@ -70,6 +70,8 @@ function requireId(value: unknown, field: string): asserts value is string {
       value === value.trim() &&
       value !== '.' &&
       value !== '..' &&
+      // Intentional Graph-identifier control-byte/path syntax exclusion.
+      // eslint-disable-next-line no-control-regex
       !/[\x00-\x20\x7f?#]/.test(value),
     'INVALID_' + field.toUpperCase()
   );
