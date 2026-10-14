@@ -1,0 +1,32 @@
+services:
+  ms365-onedrive-www:
+    image: ms365-softeria-fork:f4034f9
+    container_name: ms365-onedrive-www
+    restart: unless-stopped
+    ports:
+      - "10.10.10.63:8095:8095"
+    environment:
+      MS365_MCP_MAX_TOP: "25"
+      MS365_MCP_ATTACHMENT_URL_BASE: "https://onedrive-mcp-www.loeberwille.de"
+      MS365_MCP_ATTACHMENT_URL_TTL_S: "120"
+      LOG_LEVEL: "info"
+    volumes:
+      - /srv/ms365-mcp-www/config.env:/run/ms365/config.env:ro
+      - /srv/ms365-mcp-www/private/client-secret:/run/ms365/client-secret:ro
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command:
+      - |
+        set -eu
+        set -a
+        . /run/ms365/config.env
+        set +a
+        export MS365_MCP_CLIENT_SECRET="$(tr -d '\\r\\n' < /run/ms365/client-secret)"
+        exec node /app/dist/index.js \
+          --http 0.0.0.0:8095 \
+          --org-mode \
+          --preset all \
+          --discovery \
+          --enable-attachment-urls \
+          --public-url https://onedrive-mcp-www.loeberwille.de
