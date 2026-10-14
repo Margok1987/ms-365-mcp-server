@@ -42,9 +42,7 @@ describe('redactSensitive', () => {
 
   it('redacts a long email local part without leaving its prefix in logs', () => {
     const email = `${'a'.repeat(128)}@example.com`;
-    expect(redactSensitive(`login failed for ${email}`)).toBe(
-      'login failed for [REDACTED_EMAIL]'
-    );
+    expect(redactSensitive(`login failed for ${email}`)).toBe('login failed for [REDACTED_EMAIL]');
   });
 
   it('handles large uninterrupted base64-like content without quadratic scanning', () => {
