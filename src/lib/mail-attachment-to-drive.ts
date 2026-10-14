@@ -139,10 +139,7 @@ function checkAttachment(attachment: Json, input: MailAttachmentToDriveInput): s
       attachment.size <= MAX_MAIL_TO_DRIVE_BYTES + MAX_METADATA_OVERHEAD,
     'SOURCE_SIZE_CLASS'
   );
-  requireFact(
-    attachment.name === input.expectedAttachmentName,
-    'SOURCE_ATTACHMENT_NAME_DRIFT'
-  );
+  requireFact(attachment.name === input.expectedAttachmentName, 'SOURCE_ATTACHMENT_NAME_DRIFT');
   requireFact(
     typeof attachment.name === 'string' &&
       attachment.name.length <= 255 &&
@@ -182,9 +179,7 @@ function checkDestination(
   requireFact(destination !== null, 'DESTINATION_READBACK_MISSING');
   record(destination, 'DESTINATION_READBACK_INVALID');
   requireFact(
-    destination.id === completedId &&
-      destination.name === filename &&
-      destination.size === size,
+    destination.id === completedId && destination.name === filename && destination.size === size,
     'DESTINATION_ID_NAME_SIZE_MISMATCH'
   );
   record(destination.file, 'DESTINATION_NOT_A_FILE');
@@ -223,8 +218,7 @@ export async function saveMailAttachmentToDrive(
     );
   }
   requireFact(
-    typeof input.expectedAttachmentName === 'string' &&
-      input.expectedAttachmentName.length > 0,
+    typeof input.expectedAttachmentName === 'string' && input.expectedAttachmentName.length > 0,
     'INVALID_EXPECTED_ATTACHMENT_NAME'
   );
   const attemptId = randomUUID();
@@ -280,30 +274,24 @@ export async function saveMailAttachmentToDrive(
     );
     committed = await deps.uploadSession(session.uploadUrl, bytes);
   } catch {
-    throw new MailAttachmentToDriveError(
-      'UPLOAD_OUTCOME_UNKNOWN_NO_REPLAY',
-      true,
-      attemptId
-    );
+    throw new MailAttachmentToDriveError('UPLOAD_OUTCOME_UNKNOWN_NO_REPLAY', true, attemptId);
   }
 
   try {
     record(committed.driveItem, 'UPLOAD_COMPLETION_INVALID');
     requireId(committed.driveItem.id, 'new_drive_item_id');
     requireFact(
-      committed.driveItem.name === filename &&
-        committed.driveItem.size === bytes.length,
+      committed.driveItem.name === filename && committed.driveItem.size === bytes.length,
       'UPLOAD_COMPLETION_DRIFT'
     );
     const newId = committed.driveItem.id;
-    const [saved, afterMessage, afterAttachment, afterActor, parentAfter] =
-      await Promise.all([
-        deps.readDestination(filename),
-        deps.readMessage(),
-        deps.readAttachment(),
-        deps.readActor(),
-        deps.readParent(),
-      ]);
+    const [saved, afterMessage, afterAttachment, afterActor, parentAfter] = await Promise.all([
+      deps.readDestination(filename),
+      deps.readMessage(),
+      deps.readAttachment(),
+      deps.readActor(),
+      deps.readParent(),
+    ]);
     checkDestination(saved, input, filename, bytes.length, newId);
     checkMessage(afterMessage, input, originalMessage);
     checkAttachment(afterAttachment, input);
@@ -359,10 +347,6 @@ export async function saveMailAttachmentToDrive(
       originalAttachmentRetained: true,
     };
   } catch {
-    throw new MailAttachmentToDriveError(
-      'UPLOAD_APPLIED_UNVERIFIED_NO_REPLAY',
-      true,
-      attemptId
-    );
+    throw new MailAttachmentToDriveError('UPLOAD_APPLIED_UNVERIFIED_NO_REPLAY', true, attemptId);
   }
 }
