@@ -1,0 +1,26 @@
+services:
+  ms365-fork-diag:
+    image: ms365-softeria-fork:f4034f9-officialpatch
+    container_name: ms365-fork-diag-officialpatch
+    restart: "no"
+    ports:
+      - "10.10.10.63:8115:8115"
+    volumes:
+      - /srv/ms365-mcp-www/config.env:/run/ms365/config.env:ro
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command:
+      - |
+        set -eu
+        set -a
+        . /run/ms365/config.env
+        set +a
+        exec node /app/node_modules/@softeria/ms-365-mcp-server/dist/index.js \
+          --http 0.0.0.0:8115 \
+          --org-mode \
+          --preset all \
+          --discovery \
+          --enable-attachment-urls \
+          --public-url https://onedrive-mcp-www.loeberwille.de \
+          --trust-proxy-auth
