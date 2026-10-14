@@ -101,7 +101,10 @@ function checkDraft(draft: Json, input: DrivePdfDraftInput, before?: Json): void
   requireValue(draft.isDraft === true, 'NOT_UNSENT_DRAFT');
   requireValue(draft.parentFolderId === input.expectedParentFolderId, 'DRAFT_FOLDER_DRIFT');
   requireValue(typeof draft.changeKey === 'string' && !!draft.changeKey, 'DRAFT_REVISION_MISSING');
-  requireValue(typeof draft.subject === 'string' && !!draft.subject.trim(), 'DRAFT_SUBJECT_MISSING');
+  requireValue(
+    typeof draft.subject === 'string' && !!draft.subject.trim(),
+    'DRAFT_SUBJECT_MISSING'
+  );
   requireRecord(draft.body, 'DRAFT_BODY_MISSING');
   requireValue(
     typeof draft.body.content === 'string' &&
@@ -262,7 +265,10 @@ export async function attachDrivePdfToMailDraft(
 
   // Pre-dispatch rechecks: source version and draft revision may change during file reads.
   const [againSource, againDraft, againList, againActor] = await Promise.all([
-    deps.readSource(), deps.readDraft(), deps.listAttachments(), deps.readActor(),
+    deps.readSource(),
+    deps.readDraft(),
+    deps.listAttachments(),
+    deps.readActor(),
   ]);
   sourceFile(againSource, input);
   checkDraft(againDraft, input);
@@ -288,13 +294,14 @@ export async function attachDrivePdfToMailDraft(
     requireRecord(ack, 'POST_ACK_INVALID');
     requireId(ack.id, 'new_attachment_id');
     requireValue(
-      ack.name === name &&
-        ack.contentType === 'application/pdf' &&
-        ack.isInline === false,
+      ack.name === name && ack.contentType === 'application/pdf' && ack.isInline === false,
       'POST_ACK_DRIFT'
     );
     const [afterDraft, afterList, afterSource, afterActor] = await Promise.all([
-      deps.readDraft(), deps.listAttachments(), deps.readSource(), deps.readActor(),
+      deps.readDraft(),
+      deps.listAttachments(),
+      deps.readSource(),
+      deps.readActor(),
     ]);
     checkDraft(afterDraft, input, draft);
     sourceFile(afterSource, input);
@@ -308,9 +315,7 @@ export async function attachDrivePdfToMailDraft(
     );
     const newBytes = await deps.readAttachmentBytes(ack.id, MAX_DRAFT_PDF_BYTES);
     requireValue(
-      Buffer.isBuffer(newBytes) &&
-        newBytes.length === bytes.length &&
-        digest(newBytes) === hash,
+      Buffer.isBuffer(newBytes) && newBytes.length === bytes.length && digest(newBytes) === hash,
       'NEW_ATTACHMENT_BYTES_DRIFT'
     );
     const finalHashes = await readExisting(deps, initial);
@@ -319,10 +324,7 @@ export async function attachDrivePdfToMailDraft(
     }
     const [finalDraft, finalList] = await Promise.all([deps.readDraft(), deps.listAttachments()]);
     checkDraft(finalDraft, input, draft);
-    requireValue(
-      finalDraft.changeKey === afterDraft.changeKey,
-      'DRAFT_CHANGED_DURING_READBACK'
-    );
+    requireValue(finalDraft.changeKey === afterDraft.changeKey, 'DRAFT_CHANGED_DURING_READBACK');
     ensureBaseline(children(finalList), initial, ack.id);
     return {
       status: 'VERIFIED_DRAFT_ATTACHMENT',
