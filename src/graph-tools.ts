@@ -17,7 +17,12 @@ import { api as betaApi } from './generated/client-beta.js';
 import { api } from './generated/client.js';
 import GraphClient, { getBlobMaxBytes, isBlobOutputEnabled } from './graph-client.js';
 import { getAttachmentMinting } from './lib/attachment-minting.js';
-import { MAX_UPLOAD_BYTES, uploadAttachment } from './lib/attachment-upload.js';
+import {
+  isTodoAttachmentTarget,
+  maxAttachmentUploadBytes,
+  MAX_UPLOAD_BYTES,
+  uploadAttachment,
+} from './lib/attachment-upload.js';
 import { getUploadDirs, openUploadFile, type UploadFile } from './lib/upload-dirs.js';
 import {
   buildAttachmentUrl,
@@ -1073,10 +1078,17 @@ async function checkAccountParamInBearerMode(
  * the refusal it would have given before -- the tool's behaviour is unchanged
  * for anyone not running with `--enable-attachment-urls`.
  */
-const UPLOAD_TARGET = /^(\/me|\/users\/[^/]+)\/(messages|events)\/[^/]+\/attachments$/;
+const OUTLOOK_UPLOAD_TARGET = /^(\/me|\/users\/[^/]+)\/(messages|events)\/[^/]+\/attachments$/;
+
+function isUploadTarget(target: string): boolean {
+  return OUTLOOK_UPLOAD_TARGET.test(target) || isTodoAttachmentTarget(target);
+}
+
 const UPLOAD_CONTENT_TYPE = /^[\w.+-]+\/[\w.+-]+$/;
 
 const UPLOAD_TARGET_ERROR =
+  "target must be the attachments collection of a draft message, an event, or the signed-in user's Microsoft To Do task: /me/messages/{message-id}/attachments, /me/events/{event-id}/attachments, or /me/todo/lists/{list-id}/tasks/{task-id}/attachments.";
+const OUTLOOK_UPLOAD_TARGET_ERROR =
   'target must be the attachments collection of a draft message or an event: /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.';
 
 function uploadError(message: string): CallToolResult {
@@ -1108,6 +1120,11 @@ async function mintUploadUrl(
 ): Promise<CallToolResult> {
   const minting = getAttachmentMinting();
   if (!minting) {
+    if (isTodoAttachmentTarget(target)) {
+      return uploadError(
+        'This server is not running with --enable-attachment-urls, so no Microsoft To Do attachment upload URL can be minted. Small task attachments can still use the native taskFileAttachment create operation.'
+      );
+    }
     const smallFileTool = target.includes('/events/')
       ? 'add-calendar-event-attachment'
       : target.startsWith('/users/')
@@ -1117,7 +1134,7 @@ async function mintUploadUrl(
       `This server is not running with --enable-attachment-urls, so no upload URL can be minted. Attach small files with ${smallFileTool} (base64 contentBytes).`
     );
   }
-  if (!UPLOAD_TARGET.test(target) || !isPlainGraphPath(target)) {
+  if (!isUploadTarget(target) || !isPlainGraphPath(target)) {
     return uploadError(UPLOAD_TARGET_ERROR);
   }
   const cleanName = cleanAttachmentName(name);
@@ -1159,7 +1176,7 @@ async function mintUploadUrl(
           method: 'PUT',
           expiresAt: new Date(ticket.expiresAtMs).toISOString(),
           singleUse: true,
-          maxBytes: MAX_UPLOAD_BYTES,
+          maxBytes: maxAttachmentUploadBytes(target),
           note: 'PUT the raw file bytes with a Content-Length (e.g. curl -T <file> "<uploadUrl>"). Served by this server; valid for one upload until it expires.',
         }),
       },
@@ -1277,9 +1294,9 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     method: 'PUT',
     path: 'tool:get-upload-url',
     searchKeywords:
-      'upload attachment attach file draft email attach file event large attachment send file out-of-band upload url',
+      'upload attachment attach file draft email attach file event todo task taskfileattachment large attachment send file out-of-band upload url',
     description:
-      'Mint a short-lived, single-use URL that this server serves for uploading a file as an attachment to a draft message or an event, so the bytes go straight from the caller to Microsoft Graph instead of passing as base64 through the agent context. target is the attachments collection of the item: /me/messages/{message-id}/attachments (a draft; create it first) or /me/events/{event-id}/attachments. PUT the raw file bytes to the returned uploadUrl with a Content-Length (e.g. curl -T file "<uploadUrl>"); the response confirms the attachment. Files under 3 MB are attached directly, larger ones (up to 150 MB) through a Graph upload session. Requires --enable-attachment-urls. Returns { uploadUrl, method, expiresAt, singleUse, maxBytes }.',
+      'Mint a short-lived, single-use URL that this server serves for uploading a file as an attachment to a draft message, an event, or a Microsoft To Do task, so the bytes go straight from the caller to Microsoft Graph instead of passing as base64 through the agent context. target is the exact attachments collection: /me/messages/{message-id}/attachments, /me/events/{event-id}/attachments, or /me/todo/lists/{list-id}/tasks/{task-id}/attachments. PUT the raw file bytes to the returned uploadUrl with a Content-Length (e.g. curl -T file "<uploadUrl>"); the response confirms the attachment. Outlook uses inline POST below 3 MB and upload sessions above it; To Do always uses its authenticated upload session and is capped at 25 MB. Requires --enable-attachment-urls. Returns { uploadUrl, method, expiresAt, singleUse, maxBytes }.',
     readOnlyHint: false,
     openWorldHint: true,
     buildSchema: (ctx) => {
@@ -1287,7 +1304,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         target: z
           .string()
           .describe(
-            'Attachments collection of a draft message or an event, e.g. /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.'
+            'Exact attachments collection of a draft message, event, or Microsoft To Do task, e.g. /me/messages/{message-id}/attachments, /me/events/{event-id}/attachments, or /me/todo/lists/{list-id}/tasks/{task-id}/attachments.'
           ),
         name: z
           .string()
@@ -1388,8 +1405,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
       if (typeof filePath !== 'string' || filePath.length === 0) {
         return uploadError('filePath is required and must be a non-empty string.');
       }
-      if (!UPLOAD_TARGET.test(target) || !isPlainGraphPath(target)) {
-        return uploadError(UPLOAD_TARGET_ERROR);
+      if (!OUTLOOK_UPLOAD_TARGET.test(target) || !isPlainGraphPath(target)) {
+        return uploadError(OUTLOOK_UPLOAD_TARGET_ERROR);
       }
       const contentType =
         typeof params.contentType === 'string' && params.contentType.length > 0
