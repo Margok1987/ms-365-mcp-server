@@ -123,8 +123,9 @@ export type TicketIdentity =
 /**
  * What redeeming the ticket does. A download ticket authorises one GET of
  * `target`; an upload ticket authorises one PUT of a file that becomes an
- * attachment in the `target` collection (a draft message's or an event's
- * `/attachments`). Two kinds rather than a flag so a redemption handler has to
+ * attachment in the `target` collection (a supported draft-message, event,
+ * or Microsoft To Do task `/attachments` collection). Two kinds rather than a flag so
+ * a redemption handler has to
  * pick the branch it was written for and cannot serve the other by accident.
  */
 export type TicketPurpose =
