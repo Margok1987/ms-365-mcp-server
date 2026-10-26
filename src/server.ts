@@ -1217,7 +1217,7 @@ class MicrosoftGraphServer {
         };
         attachmentApp.get(ATTACHMENT_ROUTE, createAttachmentHandler(attachmentDeps));
         // Same route, same ticket store: a PUT redeems an upload ticket minted by
-        // get-upload-url and attaches the body to the ticket's message or event.
+        // get-upload-url and attaches the body to the ticket's message, event, or To Do task.
         attachmentApp.put(ATTACHMENT_ROUTE, createAttachmentUploadHandler(attachmentDeps));
         logger.info(
           `  - Attachment URLs: ${attachmentConfig.base}${ATTACHMENT_ROUTE} ` +
