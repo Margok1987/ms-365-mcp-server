@@ -8,7 +8,7 @@ import {
   resetAttachmentMinting,
 } from '../src/lib/attachment-minting.js';
 import { createAttachmentHandler, createAttachmentUploadHandler } from '../src/attachment-route.js';
-import { MAX_UPLOAD_BYTES } from '../src/lib/attachment-upload.js';
+import { MAX_TODO_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from '../src/lib/attachment-upload.js';
 
 vi.mock('../src/logger.js', () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -21,6 +21,7 @@ vi.mock('../src/logger.js', () => ({
  * identity that minted the ticket, and the ticket is burnt whatever happens.
  */
 const DRAFT_ATTACHMENTS = '/me/messages/AAA/attachments';
+const TODO_ATTACHMENTS = '/me/todo/lists/LIST/tasks/TASK/attachments';
 const CHUNK = 320 * 1024 * 12;
 
 function makeReq(body: Buffer, ticketId: string, headers: Record<string, string> = {}) {
@@ -226,6 +227,94 @@ describe('upload tickets and PUT /attachment', () => {
     ]);
   });
 
+
+  it('streams even a small Microsoft To Do attachment through an authenticated upload session', async () => {
+    graphClient.makeRequest.mockResolvedValue({ uploadUrl: 'https://graph.example/session-1' });
+    const puts: Array<{ url: string; range: string; authorization?: string }> = [];
+    global.fetch = vi.fn(
+      async (url: unknown, init: { headers: Record<string, string> }) => {
+        puts.push({
+          url: String(url),
+          range: init.headers['Content-Range'],
+          authorization: init.headers.Authorization,
+        });
+        return { status: 201 } as Response;
+      }
+    ) as never;
+
+    const { id } = store.mintUploadWithToken(TODO_ATTACHMENTS, 'REQ_TOKEN', {
+      name: 'qa.pdf',
+      contentType: 'application/pdf',
+    });
+    const handler = createAttachmentUploadHandler(deps());
+    const res = makeRes();
+    await handler(makeReq(Buffer.from('hello'), id), res as never);
+
+    expect(res.statusCode).toBe(201);
+    expect(graphClient.makeRequest).toHaveBeenCalledTimes(1);
+    const [sessionTarget, sessionOptions] = graphClient.makeRequest.mock.calls[0];
+    expect(sessionTarget).toBe(`${TODO_ATTACHMENTS}/createUploadSession`);
+    expect(sessionOptions.method).toBe('POST');
+    expect(sessionOptions.accessToken).toBe('REQ_TOKEN');
+    expect(JSON.parse(sessionOptions.body)).toEqual({
+      attachmentInfo: {
+        attachmentType: 'file',
+        name: 'qa.pdf',
+        size: 5,
+        contentType: 'application/pdf',
+      },
+    });
+    expect(puts).toEqual([
+      {
+        url: 'https://graph.example/session-1/content',
+        range: 'bytes 0-4/5',
+        authorization: 'Bearer REQ_TOKEN',
+      },
+    ]);
+  });
+
+  it('enforces the 25 MiB Microsoft To Do limit before Graph dispatch', async () => {
+    const { id } = store.mintUploadWithToken(TODO_ATTACHMENTS, 'REQ_TOKEN', {
+      name: 'too-big.pdf',
+      contentType: 'application/pdf',
+    });
+    const handler = createAttachmentUploadHandler(deps());
+    const res = makeRes();
+    await handler(
+      makeReq(Buffer.from('x'), id, {
+        'content-length': String(MAX_TODO_UPLOAD_BYTES + 1),
+      }),
+      res as never
+    );
+
+    expect(res.statusCode).toBe(413);
+    expect(graphClient.makeRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an uncertain Microsoft To Do upload and burns the ticket', async () => {
+    graphClient.makeRequest.mockResolvedValue({ uploadUrl: 'https://graph.example/session-2/' });
+    global.fetch = vi.fn(async () => {
+      throw new Error('connection reset after PUT dispatch');
+    }) as never;
+
+    const { id } = store.mintUploadWithToken(TODO_ATTACHMENTS, 'REQ_TOKEN', {
+      name: 'uncertain.pdf',
+      contentType: 'application/pdf',
+    });
+    const handler = createAttachmentUploadHandler(deps());
+    const first = makeRes();
+    await handler(makeReq(Buffer.from('hello'), id), first as never);
+
+    expect(first.statusCode).toBe(502);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const second = makeRes();
+    await handler(makeReq(Buffer.from('hello'), id), second as never);
+    expect(second.statusCode).toBe(404);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(graphClient.makeRequest).toHaveBeenCalledTimes(1);
+  });
+
   it('requires Content-Length and refuses oversize or empty uploads', async () => {
     const handler = createAttachmentUploadHandler(deps());
     const mint = () =>
@@ -312,6 +401,40 @@ describe('get-upload-url', () => {
     });
   });
 
+
+  it('mints an exact Microsoft To Do upload ticket with the To Do size cap', async () => {
+    const result = await requestContext.run({ accessToken: 'REQ_TOKEN' }, () =>
+      tool.execute(
+        { target: TODO_ATTACHMENTS, name: 'qa.pdf', contentType: 'application/pdf' },
+        ctx()
+      )
+    );
+    expect(result.isError).toBeFalsy();
+    const body = parse(result as never);
+    expect(body.method).toBe('PUT');
+    expect(body.singleUse).toBe(true);
+    expect(body.maxBytes).toBe(MAX_TODO_UPLOAD_BYTES);
+    const ticketId = new URL(body.uploadUrl).searchParams.get(TICKET_PARAM)!;
+    expect(store.redeem(ticketId)).toMatchObject({
+      kind: 'request-token',
+      accessToken: 'REQ_TOKEN',
+      purpose: 'upload',
+      target: TODO_ATTACHMENTS,
+      name: 'qa.pdf',
+      contentType: 'application/pdf',
+    });
+  });
+
+  it('refuses inline Content-ID metadata for Microsoft To Do attachments', async () => {
+    const result = await tool.execute(
+      { target: TODO_ATTACHMENTS, name: 'photo.png', contentId: 'inline-photo' },
+      ctx()
+    );
+    expect(result.isError).toBe(true);
+    expect(parse(result as never).error).toMatch(/only supported for Outlook/);
+    expect(store.size()).toBe(0);
+  });
+
   it('mints a bare upload URL when no key is configured, redeemable by its ticket', async () => {
     configureAttachmentMinting({
       store,
@@ -350,12 +473,15 @@ describe('get-upload-url', () => {
     expect(store.size()).toBe(0);
   });
 
-  it('refuses anything but a message or event attachments collection', async () => {
+  it('refuses unsupported or malformed attachment collections', async () => {
     for (const target of [
       '/me/messages/AAA/attachments/BBB/$value',
       '/me/drive/root/children',
       '/me/messages/AAA/attachments?x=1',
       'me/messages/AAA/attachments',
+      '/users/other@example.com/todo/lists/LIST/tasks/TASK/attachments',
+      '/me/todo/lists/LIST/tasks/TASK/attachments?x=1',
+      '/me/todo/lists/LIST/tasks/TASK/attachments/ATT',
     ]) {
       const result = await tool.execute({ target, name: 'a.txt' }, ctx());
       expect(result.isError, target).toBe(true);
