@@ -144,13 +144,7 @@ export async function uploadAttachment(
     }
   }
   if (pendingBytes > 0) {
-    await putChunk(
-      chunkUrl,
-      Buffer.concat(pending),
-      offset,
-      size,
-      todo ? accessToken : undefined
-    );
+    await putChunk(chunkUrl, Buffer.concat(pending), offset, size, todo ? accessToken : undefined);
     offset += pendingBytes;
   }
   if (offset !== size) throw new Error(`Source ended before the declared ${size} bytes`);
