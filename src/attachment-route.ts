@@ -36,7 +36,7 @@ import {
   isPlainGraphPath,
   TICKET_PARAM,
 } from './lib/attachment-tickets.js';
-import { MAX_UPLOAD_BYTES, uploadAttachment } from './lib/attachment-upload.js';
+import { maxAttachmentUploadBytes, uploadAttachment } from './lib/attachment-upload.js';
 
 export interface AttachmentRouteDeps {
   store: AttachmentTicketStore;
@@ -217,9 +217,9 @@ export function createAttachmentHandler(deps: AttachmentRouteDeps): Handler {
 /**
  * Redeem an upload ticket: the request body is the file, and it becomes an
  * attachment in the ticket's target collection as the identity that minted
- * the ticket. Small files are POSTed inline; larger ones stream through a
- * Graph upload session in fixed chunks, so the server never holds more than
- * one chunk of a large file.
+ * the ticket. Outlook chooses inline POST or an upload session by size;
+ * Microsoft To Do always uses its authenticated upload-session flow. The
+ * server never holds more than one chunk of a large file.
  */
 export function createAttachmentUploadHandler(deps: AttachmentRouteDeps): Handler {
   return async (req: Request, res: Response): Promise<void> => {
@@ -257,8 +257,9 @@ export function createAttachmentUploadHandler(deps: AttachmentRouteDeps): Handle
       res.status(400).type('text/plain').send('Empty upload');
       return;
     }
-    if (declared > MAX_UPLOAD_BYTES) {
-      res.status(413).type('text/plain').send(`Upload exceeds ${MAX_UPLOAD_BYTES} bytes`);
+    const maxBytes = maxAttachmentUploadBytes(ticket.target);
+    if (declared > maxBytes) {
+      res.status(413).type('text/plain').send(`Upload exceeds ${maxBytes} bytes`);
       return;
     }
 
