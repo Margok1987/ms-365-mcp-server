@@ -1197,7 +1197,7 @@ const contentIdSchema = z
   );
 
 const UPLOAD_TARGET_ERROR =
-  'target must be the attachments collection of a draft message, an event, or the signed-in user\'s Microsoft To Do task: /me/messages/{message-id}/attachments, /me/events/{event-id}/attachments, or /me/todo/lists/{list-id}/tasks/{task-id}/attachments.';
+  "target must be the attachments collection of a draft message, an event, or the signed-in user's Microsoft To Do task: /me/messages/{message-id}/attachments, /me/events/{event-id}/attachments, or /me/todo/lists/{list-id}/tasks/{task-id}/attachments.";
 const OUTLOOK_UPLOAD_TARGET_ERROR =
   'target must be the attachments collection of a draft message or an event: /me/messages/{message-id}/attachments or /me/events/{event-id}/attachments.';
 
