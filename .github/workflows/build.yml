@@ -1,6 +1,8 @@
 name: Build
 
 on:
+  push:
+    branches: [ todo-attachment-streaming-0.165.0-2026-10-26 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
