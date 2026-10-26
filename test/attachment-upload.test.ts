@@ -227,20 +227,17 @@ describe('upload tickets and PUT /attachment', () => {
     ]);
   });
 
-
   it('streams even a small Microsoft To Do attachment through an authenticated upload session', async () => {
     graphClient.makeRequest.mockResolvedValue({ uploadUrl: 'https://graph.example/session-1' });
     const puts: Array<{ url: string; range: string; authorization?: string }> = [];
-    global.fetch = vi.fn(
-      async (url: unknown, init: { headers: Record<string, string> }) => {
-        puts.push({
-          url: String(url),
-          range: init.headers['Content-Range'],
-          authorization: init.headers.Authorization,
-        });
-        return { status: 201 } as Response;
-      }
-    ) as never;
+    global.fetch = vi.fn(async (url: unknown, init: { headers: Record<string, string> }) => {
+      puts.push({
+        url: String(url),
+        range: init.headers['Content-Range'],
+        authorization: init.headers.Authorization,
+      });
+      return { status: 201 } as Response;
+    }) as never;
 
     const { id } = store.mintUploadWithToken(TODO_ATTACHMENTS, 'REQ_TOKEN', {
       name: 'qa.pdf',
@@ -400,7 +397,6 @@ describe('get-upload-url', () => {
       contentType: 'application/pdf',
     });
   });
-
 
   it('mints an exact Microsoft To Do upload ticket with the To Do size cap', async () => {
     const result = await requestContext.run({ accessToken: 'REQ_TOKEN' }, () =>
