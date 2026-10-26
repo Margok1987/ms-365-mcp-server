@@ -98,7 +98,7 @@ const UNIVERSAL_UTILITY_TOOLS = ['download-bytes', 'download-bytes-to-file'];
 // URLs.
 const SCOPED_UTILITY_TOOLS: Record<string, string[]> = {
   'get-download-url': ['files', 'onedrive', 'personal', 'work', 'search'],
-  'get-upload-url': ['mail', 'calendar', 'outlook', 'personal', 'work'],
+  'get-upload-url': ['mail', 'calendar', 'outlook', 'tasks', 'personal', 'work'],
   'upload-attachment-from-file': ['mail', 'calendar', 'outlook', 'personal', 'work'],
   'parse-teams-url': ['teams', 'teams-write', 'work'],
 };
