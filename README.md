@@ -793,8 +793,9 @@ ticket only moves those bytes out of the context window and into a direct transf
 ### Uploading attachments the same way
 
 The same ticket store works in the other direction. `get-upload-url` mints a URL for
-attaching a file to a draft message or an event, so the bytes go straight from the caller
-to Graph instead of passing as base64 `contentBytes` through the agent context:
+attaching a file to a draft message, an event, or a Microsoft To Do task, so the bytes go
+straight from the caller to Graph instead of passing as base64 `contentBytes` through the
+agent context:
 
 ```
 PUT /attachment?t=<ticket>&dgk=<key-id>&dgx=<expiry>&dgs=<signature>
@@ -803,14 +804,22 @@ Content-Length: <file size>
 <raw file bytes>
 ```
 
-`target` is the item's attachments collection (`/me/messages/{id}/attachments` for a draft,
-`/me/events/{id}/attachments` for an event); `name` and `contentType` are recorded on the
-attachment. Files under 3 MB are attached inline; larger ones, up to Graph's 150 MB, stream
-through an upload session in 3.75 MiB chunks, so the server never holds more than one chunk.
+`target` is the exact attachments collection: `/me/messages/{id}/attachments` for a draft,
+`/me/events/{id}/attachments` for an event, or
+`/me/todo/lists/{list-id}/tasks/{task-id}/attachments` for the signed-in user's To Do task.
+`name` and `contentType` are recorded on the attachment. Outlook files under 3 MB are
+attached inline; larger Outlook files, up to 150 MB, stream through an upload session.
+Microsoft To Do always uses its authenticated upload-session flow, including below 3 MB, and
+is capped at 25 MB. Upload-session chunks remain 3.75 MiB, so the server never holds more than
+one chunk. The To Do session's Microsoft Graph bearer stays inside this server; the caller
+receives only the short-lived ticket URL and sends raw bytes to it.
+
 `Content-Length` is required. The ticket is single-use and burnt on first presentation
-whatever the outcome, and the upload is attached as the identity that minted it, exactly as
-downloads are fetched. An upload ticket presented to `GET` (or a download ticket to `PUT`)
-is refused with the same 404 as any other bad ticket.
+whatever the outcome. A failed or transport-uncertain upload is therefore not replayed with
+the same ticket; reconcile the native attachment collection before minting a fresh ticket.
+The upload is attached as the identity that minted it, exactly as downloads are fetched. An
+upload ticket presented to `GET` (or a download ticket to `PUT`) is refused with the same
+404 as any other bad ticket.
 
 ### Attaching a local file in stdio mode
 
