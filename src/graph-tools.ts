@@ -83,6 +83,11 @@ import {
 } from './lib/user-field-policy.js';
 import logger from './logger.js';
 import { getRequestTokens } from './request-context.js';
+import {
+  assertTodoMoveTokenPair,
+  moveTodoTaskViaSubstrate,
+  todoMoveEnabled,
+} from './lib/todo-substrate.js';
 import { TOOL_CATEGORIES } from './tool-categories.js';
 
 // Tools from every Graph API version share one registry. Each tool's version is carried
@@ -963,6 +968,7 @@ async function executeUtilityTool(
 interface UtilityToolContext {
   graphClient: GraphClient;
   authManager?: AuthManager;
+  todoMoveAuthManager?: AuthManager;
   multiAccount: boolean;
   accountNames: string[];
   userFields?: string[];
@@ -2437,6 +2443,178 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
       }
     },
   },
+  {
+    name: 'move-todo-task',
+    method: 'PATCH',
+    path: 'tool:move-todo-task',
+    searchKeywords:
+      'move microsoft todo task list reparent flagged email cross list substrate outlook origin',
+    description:
+      'Move exactly one Microsoft To Do task from one list to another using Microsoft To Do\'s Exchange-backed Substrate re-parent operation. The task receives a new task ID. No Graph create/delete fallback is used and ambiguous outcomes are never retried automatically. Requires --enable-todo-move plus a separate delegated Exchange Online Tasks.ReadWrite login prepared with --todo-move-login. Returns previousTaskId and the new taskId; callers must perform Graph readback and reconcile source/destination before any retry after an unknown outcome.',
+    readOnlyHint: false,
+    openWorldHint: true,
+    enabled: todoMoveEnabled,
+    buildSchema: () => ({
+      sourceListId: z
+        .string()
+        .min(1)
+        .describe('Exact native Microsoft To Do source-list id read from the current principal.'),
+      todoTaskId: z
+        .string()
+        .min(1)
+        .describe('Exact current native Microsoft To Do task id under sourceListId.'),
+      destinationListId: z
+        .string()
+        .min(1)
+        .describe('Exact native Microsoft To Do destination-list id under the same principal.'),
+    }),
+    execute: async (
+      params,
+      { authManager, todoMoveAuthManager }
+    ): Promise<CallToolResult> => {
+      const sourceListId = params.sourceListId;
+      const todoTaskId = params.todoTaskId;
+      const destinationListId = params.destinationListId;
+
+      if (
+        typeof sourceListId !== 'string' ||
+        typeof todoTaskId !== 'string' ||
+        typeof destinationListId !== 'string' ||
+        sourceListId.trim() === '' ||
+        todoTaskId.trim() === '' ||
+        destinationListId.trim() === ''
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'sourceListId, todoTaskId and destinationListId are required non-empty native ids.',
+                code: 'TODO_MOVE_INVALID_INPUT',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      if (!todoMoveAuthManager) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'To Do move authentication is unavailable. Start the server with --enable-todo-move and provision the Exchange Online token once with --todo-move-login.',
+                code: 'TODO_MOVE_AUTH_UNAVAILABLE',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const graphAccessToken =
+        getRequestTokens()?.accessToken ??
+        (await authManager?.getTokenForAccount().catch(() => null)) ??
+        null;
+      if (!graphAccessToken) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'No current Microsoft Graph access token is available for principal binding.',
+                code: 'TODO_MOVE_GRAPH_IDENTITY_UNAVAILABLE',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const exchangeAccessToken = await todoMoveAuthManager
+        .getTokenForAccount()
+        .catch(() => null);
+      if (!exchangeAccessToken) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'No usable delegated Exchange Online Tasks.ReadWrite token is cached. Run --todo-move-login for the same Microsoft principal.',
+                code: 'TODO_MOVE_EXO_LOGIN_REQUIRED',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      let anchorMailbox: string;
+      try {
+        ({ anchorMailbox } = assertTodoMoveTokenPair(graphAccessToken, exchangeAccessToken));
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: (error as Error).message,
+                code: 'TODO_MOVE_PRINCIPAL_OR_SCOPE_MISMATCH',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await moveTodoTaskViaSubstrate({
+          accessToken: exchangeAccessToken,
+          sourceListId,
+          taskId: todoTaskId,
+          destinationListId,
+          anchorMailbox,
+        });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                ...result,
+                readbackRequired: true,
+                retryPolicy:
+                  'Do not replay after TODO_MOVE_OUTCOME_UNKNOWN. Reconcile the old source parent and intended destination through normal To Do reads first.',
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        const typed = error as Error & {
+          code?: string;
+          unknownOutcome?: boolean;
+          status?: number;
+        };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: typed.message,
+                code: typed.code ?? 'TODO_MOVE_FAILED',
+                unknownOutcome: typed.unknownOutcome === true,
+                ...(typeof typed.status === 'number' ? { httpStatus: typed.status } : {}),
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  },
 ];
 
 function registerUtilityToolWithMcp(
@@ -3528,6 +3706,7 @@ export interface GraphToolRegistrationOptions {
   enabledTools?: string;
   orgMode?: boolean;
   authManager?: AuthManager;
+  todoMoveAuthManager?: AuthManager;
   multiAccount?: boolean;
   accountNames?: string[];
   allowedScopes?: string;
@@ -3545,6 +3724,7 @@ export function registerGraphTools(
     enabledTools: enabledToolsPattern,
     orgMode = false,
     authManager,
+    todoMoveAuthManager,
     multiAccount = false,
     accountNames = [],
     allowedScopes: allowedScopesValue,
@@ -3777,6 +3957,7 @@ export function registerGraphTools(
   const utilityCtx: UtilityToolContext = {
     graphClient,
     authManager,
+    todoMoveAuthManager,
     multiAccount,
     accountNames,
     userFields,
@@ -3962,6 +4143,7 @@ export function registerDiscoveryTools(
     enabledTools,
     orgMode = false,
     authManager,
+    todoMoveAuthManager,
     multiAccount = false,
     accountNames = [],
     allowedScopes: allowedScopesValue,
@@ -4017,6 +4199,7 @@ export function registerDiscoveryTools(
   const utilityCtx: UtilityToolContext = {
     graphClient,
     authManager,
+    todoMoveAuthManager,
     multiAccount,
     accountNames,
     userFields,
