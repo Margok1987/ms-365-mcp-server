@@ -2,6 +2,81 @@ export const EXO_TASKS_SCOPE = 'https://outlook.office.com/Tasks.ReadWrite';
 export const TODO_MOVE_FEATURE_ENV = 'MS365_MCP_ENABLE_TODO_MOVE';
 export const SUBSTRATE_TODO_BASE = 'https://substrate.office.com/todob2/api/v1';
 
+const EXO_AUDIENCES = new Set([
+  'https://outlook.office.com',
+  '00000002-0000-0ff1-ce00-000000000000',
+]);
+
+export interface DelegatedPrincipal {
+  oid: string;
+  tid: string;
+  aud: string;
+  scopes: string[];
+}
+
+function decodeJwtClaims(token: string): Record<string, unknown> {
+  const parts = token.split('.');
+  if (parts.length < 2 || !parts[1]) {
+    throw new Error('Access token is not a JWT with a readable delegated-principal payload.');
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (!parsed || typeof parsed !== 'object') throw new Error('claims are not an object');
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`Access token claims could not be decoded: ${(error as Error).message}`);
+  }
+}
+
+export function delegatedPrincipalFromAccessToken(token: string): DelegatedPrincipal {
+  const claims = decodeJwtClaims(token);
+  const oid = typeof claims.oid === 'string' ? claims.oid : '';
+  const tid = typeof claims.tid === 'string' ? claims.tid : '';
+  const aud = typeof claims.aud === 'string' ? claims.aud : '';
+  const scopes =
+    typeof claims.scp === 'string'
+      ? claims.scp
+          .split(/\s+/)
+          .map((scope) => scope.trim())
+          .filter(Boolean)
+      : [];
+
+  if (!oid || !tid) {
+    throw new Error('Access token does not expose delegated oid/tid claims.');
+  }
+  return { oid, tid, aud, scopes };
+}
+
+export function assertTodoMoveTokenPair(
+  graphAccessToken: string,
+  exchangeAccessToken: string
+): { anchorMailbox: string; oid: string; tid: string } {
+  const graph = delegatedPrincipalFromAccessToken(graphAccessToken);
+  const exchange = delegatedPrincipalFromAccessToken(exchangeAccessToken);
+
+  if (graph.oid !== exchange.oid || graph.tid !== exchange.tid) {
+    throw new Error(
+      'Graph and Exchange Online tokens belong to different delegated principals; refusing To Do move.'
+    );
+  }
+
+  if (!EXO_AUDIENCES.has(exchange.aud.replace(/\/$/, ''))) {
+    throw new Error(
+      `Exchange Online token has unexpected audience ${JSON.stringify(exchange.aud)}; refusing To Do move.`
+    );
+  }
+
+  if (!exchange.scopes.some((scope) => scope.toLowerCase() === 'tasks.readwrite')) {
+    throw new Error('Exchange Online token lacks delegated Tasks.ReadWrite; refusing To Do move.');
+  }
+
+  return {
+    anchorMailbox: `OID:${exchange.oid}@${exchange.tid}`,
+    oid: exchange.oid,
+    tid: exchange.tid,
+  };
+}
+
 export interface TodoMoveResult {
   previousTaskId: string;
   taskId: string;
