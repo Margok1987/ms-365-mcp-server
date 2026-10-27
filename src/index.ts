@@ -94,6 +94,15 @@ async function main(): Promise<void> {
       await authManager.loadTokenCache();
     }
 
+    const todoMoveClientId = process.env.MS365_MCP_TODO_MOVE_CLIENT_ID?.trim();
+    if (
+      (args.enableTodoMove || args.todoMoveLogin) &&
+      process.env.MS365_MCP_TODO_MOVE_CLIENT_ID !== undefined &&
+      !todoMoveClientId
+    ) {
+      throw new Error('MS365_MCP_TODO_MOVE_CLIENT_ID was provided but is empty.');
+    }
+
     const todoMoveAuthManager =
       args.enableTodoMove || args.todoMoveLogin
         ? await AuthManager.create(
@@ -102,7 +111,7 @@ async function main(): Promise<void> {
               expectedUsername: args.expectedUsername,
               expectedHomeAccountId: args.expectedHomeAccountId,
             },
-            { storage }
+            { storage, clientId: todoMoveClientId }
           )
         : undefined;
     if (todoMoveAuthManager) {
