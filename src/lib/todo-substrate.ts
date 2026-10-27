@@ -116,7 +116,7 @@ export class TodoMoveRejectedError extends Error {
   }
 }
 
-export function todoMoveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function todoMoveEnabled(env: Record<string, string | undefined> = process.env): boolean {
   const raw = env[TODO_MOVE_FEATURE_ENV]?.trim().toLowerCase();
   return raw === '1' || raw === 'true';
 }
