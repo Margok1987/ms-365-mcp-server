@@ -39,6 +39,12 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Show formatting diff on failure
+        if: failure()
+        run: |
+          npx prettier --write src/graph-tools.ts src/__tests__/graph-tools.test.ts src/lib/todo-substrate.test.ts
+          git diff -- src/graph-tools.ts src/__tests__/graph-tools.test.ts src/lib/todo-substrate.test.ts
+
       # tsup strips types without checking them, so build alone cannot catch type errors
       # Node 18 skips the @azure/* optional deps (engines >=20), so tsc can't find them
       - name: Type check
