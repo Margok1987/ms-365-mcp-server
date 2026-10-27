@@ -57,7 +57,7 @@ export function shouldUseLocalAuthStorage(args: CommandOptions): boolean {
   if (!args.http) {
     return true;
   }
-  if (args.enableAuthTools) {
+  if (args.enableAuthTools || args.enableTodoMove) {
     return true;
   }
   return LOCAL_ACCOUNT_COMMANDS.some((key) => Boolean(args[key]));
