@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('moveTodoTaskViaSubstrate', () => {
   it('issues exactly one re-parent PATCH and returns the new native identity', async () => {
-    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (url: unknown, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => {
       expect(String(url)).toBe(
         `${SUBSTRATE_TODO_BASE}/taskfolders/destination/tasks/old-task`
       );
