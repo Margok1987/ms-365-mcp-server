@@ -18,16 +18,19 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('moveTodoTaskViaSubstrate', () => {
   it('issues exactly one re-parent PATCH and returns the new native identity', async () => {
-    const fetchImpl = vi.fn(async (url: unknown, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => {
-      expect(String(url)).toBe(
-        `${SUBSTRATE_TODO_BASE}/taskfolders/destination/tasks/old-task`
-      );
-      expect(init?.method).toBe('PATCH');
-      expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
-      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer exo-token');
-      expect((init?.headers as Record<string, string>)['x-anchormailbox']).toBe('OID:oid@tid');
-      return jsonResponse({ Id: 'new-task', ParentFolderId: 'destination' });
-    });
+    const fetchImpl = vi.fn(
+      async (
+        url: unknown,
+        init?: { method?: string; body?: unknown; headers?: Record<string, string> }
+      ) => {
+        expect(String(url)).toBe(`${SUBSTRATE_TODO_BASE}/taskfolders/destination/tasks/old-task`);
+        expect(init?.method).toBe('PATCH');
+        expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
+        expect((init?.headers as Record<string, string>).authorization).toBe('Bearer exo-token');
+        expect((init?.headers as Record<string, string>)['x-anchormailbox']).toBe('OID:oid@tid');
+        return jsonResponse({ Id: 'new-task', ParentFolderId: 'destination' });
+      }
+    );
 
     const result = await moveTodoTaskViaSubstrate({
       accessToken: 'exo-token',
@@ -140,7 +143,6 @@ describe('todo move feature contract', () => {
   });
 });
 
-
 function jwt(claims: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
@@ -179,7 +181,9 @@ describe('todo move delegated principal binding', () => {
       scp: 'Tasks.ReadWrite',
     });
 
-    expect(() => assertTodoMoveTokenPair(graph, exchange)).toThrow('different delegated principals');
+    expect(() => assertTodoMoveTokenPair(graph, exchange)).toThrow(
+      'different delegated principals'
+    );
   });
 
   it('rejects the wrong Exchange audience or missing Exchange Tasks.ReadWrite', () => {
@@ -198,6 +202,8 @@ describe('todo move delegated principal binding', () => {
     });
 
     expect(() => assertTodoMoveTokenPair(graph, wrongAudience)).toThrow('unexpected audience');
-    expect(() => assertTodoMoveTokenPair(graph, wrongScope)).toThrow('lacks delegated Tasks.ReadWrite');
+    expect(() => assertTodoMoveTokenPair(graph, wrongScope)).toThrow(
+      'lacks delegated Tasks.ReadWrite'
+    );
   });
 });
