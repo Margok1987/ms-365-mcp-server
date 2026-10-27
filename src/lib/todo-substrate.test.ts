@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   EXO_TASKS_SCOPE,
+  assertTodoMoveTokenPair,
   SUBSTRATE_TODO_BASE,
   TodoMoveOutcomeUnknownError,
   TodoMoveRejectedError,
@@ -136,5 +137,67 @@ describe('todo move feature contract', () => {
     expect(todoMoveEnabled({})).toBe(false);
     expect(todoMoveEnabled({ MS365_MCP_ENABLE_TODO_MOVE: 'true' })).toBe(true);
     expect(todoMoveEnabled({ MS365_MCP_ENABLE_TODO_MOVE: '1' })).toBe(true);
+  });
+});
+
+
+function jwt(claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  return `${header}.${payload}.signature`;
+}
+
+describe('todo move delegated principal binding', () => {
+  it('accepts matching Graph/Exchange principals and derives x-anchormailbox', () => {
+    const graph = jwt({
+      oid: '11111111-1111-1111-1111-111111111111',
+      tid: '22222222-2222-2222-2222-222222222222',
+      aud: 'https://graph.microsoft.com',
+      scp: 'Tasks.ReadWrite User.Read',
+    });
+    const exchange = jwt({
+      oid: '11111111-1111-1111-1111-111111111111',
+      tid: '22222222-2222-2222-2222-222222222222',
+      aud: 'https://outlook.office.com',
+      scp: 'Tasks.ReadWrite',
+    });
+
+    expect(assertTodoMoveTokenPair(graph, exchange)).toEqual({
+      anchorMailbox:
+        'OID:11111111-1111-1111-1111-111111111111@22222222-2222-2222-2222-222222222222',
+      oid: '11111111-1111-1111-1111-111111111111',
+      tid: '22222222-2222-2222-2222-222222222222',
+    });
+  });
+
+  it('rejects a different delegated principal before dispatch', () => {
+    const graph = jwt({ oid: 'graph-oid', tid: 'tenant', aud: 'graph', scp: 'Tasks.ReadWrite' });
+    const exchange = jwt({
+      oid: 'other-oid',
+      tid: 'tenant',
+      aud: 'https://outlook.office.com',
+      scp: 'Tasks.ReadWrite',
+    });
+
+    expect(() => assertTodoMoveTokenPair(graph, exchange)).toThrow('different delegated principals');
+  });
+
+  it('rejects the wrong Exchange audience or missing Exchange Tasks.ReadWrite', () => {
+    const graph = jwt({ oid: 'same', tid: 'tenant', aud: 'graph', scp: 'Tasks.ReadWrite' });
+    const wrongAudience = jwt({
+      oid: 'same',
+      tid: 'tenant',
+      aud: 'https://graph.microsoft.com',
+      scp: 'Tasks.ReadWrite',
+    });
+    const wrongScope = jwt({
+      oid: 'same',
+      tid: 'tenant',
+      aud: 'https://outlook.office.com',
+      scp: 'Tasks.Read',
+    });
+
+    expect(() => assertTodoMoveTokenPair(graph, wrongAudience)).toThrow('unexpected audience');
+    expect(() => assertTodoMoveTokenPair(graph, wrongScope)).toThrow('lacks delegated Tasks.ReadWrite');
   });
 });
