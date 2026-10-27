@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [ main ]
   push:
-    branches: [ todo-attachment-streaming-bridge-2026-10-26 ]
+    branches: [ todo-attachment-streaming-bridge-2026-10-26, feature/todo-substrate-move-20261027 ]
   workflow_dispatch:
 
 jobs:
