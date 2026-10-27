@@ -697,6 +697,8 @@ interface ExpectedAccountOptions {
 
 interface AuthManagerCreateOptions {
   storage?: TokenCacheStorage;
+  /** Optional client-id override for a separately registered public-client auth surface. */
+  clientId?: string;
 }
 
 /**
@@ -831,7 +833,9 @@ class AuthManager {
     options: AuthManagerCreateOptions = {}
   ): Promise<AuthManager> {
     const secrets = await getSecrets();
-    const config = createMsalConfig(secrets);
+    const config = createMsalConfig(
+      options.clientId ? { ...secrets, clientId: options.clientId } : secrets
+    );
     const storage =
       options.storage ??
       (await createTokenCacheStorage({ allowCommandStorage: false, logProvider: true }));

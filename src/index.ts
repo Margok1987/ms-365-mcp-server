@@ -13,6 +13,7 @@ import {
 import { createTokenCacheStorage } from './token-cache-storage.js';
 import { dumpError, getActiveResources } from './crash-logging.js';
 import { version } from './version.js';
+import { EXO_TASKS_SCOPE } from './lib/todo-substrate.js';
 
 // Global crash handlers. Without these, an unhandled rejection from a dependency
 // (MSAL HTTP, keytar native, fetch in node) kills the stdio process silently
@@ -93,6 +94,30 @@ async function main(): Promise<void> {
       await authManager.loadTokenCache();
     }
 
+    const todoMoveClientId = process.env.MS365_MCP_TODO_MOVE_CLIENT_ID?.trim();
+    if (
+      (args.enableTodoMove || args.todoMoveLogin) &&
+      process.env.MS365_MCP_TODO_MOVE_CLIENT_ID !== undefined &&
+      !todoMoveClientId
+    ) {
+      throw new Error('MS365_MCP_TODO_MOVE_CLIENT_ID was provided but is empty.');
+    }
+
+    const todoMoveAuthManager =
+      args.enableTodoMove || args.todoMoveLogin
+        ? await AuthManager.create(
+            [EXO_TASKS_SCOPE],
+            {
+              expectedUsername: args.expectedUsername,
+              expectedHomeAccountId: args.expectedHomeAccountId,
+            },
+            { storage, clientId: todoMoveClientId }
+          )
+        : undefined;
+    if (todoMoveAuthManager) {
+      await todoMoveAuthManager.loadTokenCache();
+    }
+
     if (args.authBrowser) {
       authManager.setUseInteractiveAuth(true);
       logger.info('Browser-based interactive auth enabled');
@@ -113,6 +138,31 @@ async function main(): Promise<void> {
       logger.info('Login completed, testing connection with Graph API...');
       const result = await authManager.testLogin();
       console.log(JSON.stringify(result));
+      process.exit(0);
+    }
+
+    if (args.todoMoveLogin) {
+      if (!todoMoveAuthManager) {
+        throw new Error('To Do move auth manager was not initialized.');
+      }
+      if (args.authBrowser) {
+        await todoMoveAuthManager.acquireTokenInteractive();
+      } else {
+        await todoMoveAuthManager.acquireTokenByDeviceCode();
+      }
+      const accounts = await todoMoveAuthManager.listAccounts();
+      const selectedAccountId = todoMoveAuthManager.getSelectedAccountId();
+      console.log(
+        JSON.stringify({
+          todoMoveLogin: true,
+          exchangeScope: EXO_TASKS_SCOPE,
+          accounts: accounts.map((account) => ({
+            id: account.homeAccountId,
+            username: account.username,
+            selected: account.homeAccountId === selectedAccountId,
+          })),
+        })
+      );
       process.exit(0);
     }
 
@@ -168,7 +218,7 @@ async function main(): Promise<void> {
       await authManager.assertExpectedAccountAvailable();
     }
 
-    const server = new MicrosoftGraphServer(authManager, args);
+    const server = new MicrosoftGraphServer(authManager, args, todoMoveAuthManager);
     await server.initialize(version);
     await server.start();
   } catch (error) {

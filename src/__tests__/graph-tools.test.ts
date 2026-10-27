@@ -4002,6 +4002,148 @@ describe('graph-tools', () => {
     });
   });
 
+  describe('To Do move utility', () => {
+    const previous = process.env.MS365_MCP_ENABLE_TODO_MOVE;
+
+    afterEach(() => {
+      if (previous === undefined) delete process.env.MS365_MCP_ENABLE_TODO_MOVE;
+      else process.env.MS365_MCP_ENABLE_TODO_MOVE = previous;
+      vi.unstubAllGlobals();
+    });
+
+    it('is opt-in and is excluded by read-only mode', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+
+      delete process.env.MS365_MCP_ENABLE_TODO_MOVE;
+      let server = createMockServer();
+      let module = await loadModule();
+      module.registerGraphTools(server as any, {} as any);
+      expect(server.tools.has('move-todo-task')).toBe(false);
+
+      process.env.MS365_MCP_ENABLE_TODO_MOVE = 'true';
+      server = createMockServer();
+      module = await loadModule();
+      module.registerGraphTools(server as any, {} as any, { readOnly: true });
+      expect(server.tools.has('move-todo-task')).toBe(false);
+
+      server = createMockServer();
+      module.registerGraphTools(server as any, {} as any);
+      expect(server.tools.has('move-todo-task')).toBe(true);
+    });
+
+    it('surfaces through discovery and performs exactly one same-principal reparent PATCH', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+      process.env.MS365_MCP_ENABLE_TODO_MOVE = 'true';
+
+      const oid = '11111111-1111-1111-1111-111111111111';
+      const tid = '22222222-2222-2222-2222-222222222222';
+      const graphToken = makeJwt({
+        oid,
+        tid,
+        aud: 'https://graph.microsoft.com',
+        scp: 'Tasks.ReadWrite User.Read',
+      });
+      const exchangeToken = makeJwt({
+        oid,
+        tid,
+        aud: 'https://outlook.office.com',
+        scp: 'Tasks.ReadWrite',
+      });
+      const authManager = { getTokenForAccount: vi.fn().mockResolvedValue(graphToken) };
+      const todoMoveAuthManager = { getTokenForAccount: vi.fn().mockResolvedValue(exchangeToken) };
+      const fetchMock = vi.fn(
+        async (
+          url: unknown,
+          init?: { method?: string; body?: unknown; headers?: Record<string, string> }
+        ) => {
+          expect(String(url)).toContain('/taskfolders/destination/tasks/old-task');
+          expect(init?.method).toBe('PATCH');
+          expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
+          expect((init?.headers as Record<string, string>)['x-anchormailbox']).toBe(
+            `OID:${oid}@${tid}`
+          );
+          return new Response(JSON.stringify({ Id: 'new-task', ParentFolderId: 'destination' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const server = createMockServer();
+      const { registerDiscoveryTools } = await loadModule();
+      registerDiscoveryTools(server as any, {} as any, {
+        authManager: authManager as any,
+        todoMoveAuthManager: todoMoveAuthManager as any,
+      });
+
+      const found = await server.tools.get('search-tools')!.handler({ query: 'move todo task' });
+      expect(JSON.parse(found.content[0].text).tools.map((t: any) => t.name)).toContain(
+        'move-todo-task'
+      );
+
+      const result = await server.tools.get('execute-tool')!.handler({
+        tool_name: 'move-todo-task',
+        parameters: {
+          sourceListId: 'source',
+          todoTaskId: 'old-task',
+          destinationListId: 'destination',
+        },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({
+        previousTaskId: 'old-task',
+        taskId: 'new-task',
+        sourceListId: 'source',
+        destinationListId: 'destination',
+        parentFolderId: 'destination',
+        readbackRequired: true,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a mismatched Exchange principal before any native move dispatch', async () => {
+      mockEndpoints.length = 0;
+      mockEndpointsJson = [];
+      process.env.MS365_MCP_ENABLE_TODO_MOVE = 'true';
+
+      const graphToken = makeJwt({
+        oid: 'graph-principal',
+        tid: 'tenant',
+        aud: 'https://graph.microsoft.com',
+        scp: 'Tasks.ReadWrite',
+      });
+      const exchangeToken = makeJwt({
+        oid: 'other-principal',
+        tid: 'tenant',
+        aud: 'https://outlook.office.com',
+        scp: 'Tasks.ReadWrite',
+      });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const server = createMockServer();
+      const { registerGraphTools } = await loadModule();
+      registerGraphTools(server as any, {} as any, {
+        authManager: { getTokenForAccount: vi.fn().mockResolvedValue(graphToken) } as any,
+        todoMoveAuthManager: {
+          getTokenForAccount: vi.fn().mockResolvedValue(exchangeToken),
+        } as any,
+      });
+
+      const result = await server.tools.get('move-todo-task')!.handler({
+        sourceListId: 'source',
+        todoTaskId: 'old-task',
+        destinationListId: 'destination',
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).code).toBe('TODO_MOVE_PRINCIPAL_OR_SCOPE_MISMATCH');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- 11. Discovery mode respects --enabled-tools ----
   describe('discovery mode: --enabled-tools filter', () => {
     it('search-tools only surfaces Graph tools matching the regex', async () => {
