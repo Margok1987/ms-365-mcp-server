@@ -2450,7 +2450,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
     searchKeywords:
       'move microsoft todo task list reparent flagged email cross list substrate outlook origin',
     description:
-      'Move exactly one Microsoft To Do task from one list to another using Microsoft To Do\'s Exchange-backed Substrate re-parent operation. The task receives a new task ID. No Graph create/delete fallback is used and ambiguous outcomes are never retried automatically. Requires --enable-todo-move plus a separate delegated Exchange Online Tasks.ReadWrite login prepared with --todo-move-login. Returns previousTaskId and the new taskId; callers must perform Graph readback and reconcile source/destination before any retry after an unknown outcome.',
+      "Move exactly one Microsoft To Do task from one list to another using Microsoft To Do's Exchange-backed Substrate re-parent operation. The task receives a new task ID. No Graph create/delete fallback is used and ambiguous outcomes are never retried automatically. Requires --enable-todo-move plus a separate delegated Exchange Online Tasks.ReadWrite login prepared with --todo-move-login. Returns previousTaskId and the new taskId; callers must perform Graph readback and reconcile source/destination before any retry after an unknown outcome.",
     readOnlyHint: false,
     openWorldHint: true,
     enabled: todoMoveEnabled,
@@ -2468,10 +2468,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         .min(1)
         .describe('Exact native Microsoft To Do destination-list id under the same principal.'),
     }),
-    execute: async (
-      params,
-      { authManager, todoMoveAuthManager }
-    ): Promise<CallToolResult> => {
+    execute: async (params, { authManager, todoMoveAuthManager }): Promise<CallToolResult> => {
       const sourceListId = params.sourceListId;
       const todoTaskId = params.todoTaskId;
       const destinationListId = params.destinationListId;
@@ -2525,7 +2522,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             {
               type: 'text',
               text: JSON.stringify({
-                error: 'No current Microsoft Graph access token is available for principal binding.',
+                error:
+                  'No current Microsoft Graph access token is available for principal binding.',
                 code: 'TODO_MOVE_GRAPH_IDENTITY_UNAVAILABLE',
               }),
             },
@@ -2534,9 +2532,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         };
       }
 
-      const exchangeAccessToken = await todoMoveAuthManager
-        .getTokenForAccount()
-        .catch(() => null);
+      const exchangeAccessToken = await todoMoveAuthManager.getTokenForAccount().catch(() => null);
       if (!exchangeAccessToken) {
         return {
           content: [
