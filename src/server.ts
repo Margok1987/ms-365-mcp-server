@@ -267,6 +267,7 @@ class MicrosoftGraphServer {
   private server: McpServer | null;
   private secrets: AppSecrets | null;
   private oboClient: OboClient | null;
+  private todoMoveAuthManager?: AuthManager;
   private version: string = '0.0.0';
   private multiAccount: boolean = false;
   private accountNames: string[] = [];
@@ -284,9 +285,14 @@ class MicrosoftGraphServer {
   // Two-leg PKCE: stores client's code_challenge and server's code_verifier, keyed by OAuth state
   private pkceStore: Map<string, PkceEntry> = new Map();
 
-  constructor(authManager: AuthManager, options: CommandOptions = {}) {
+  constructor(
+    authManager: AuthManager,
+    options: CommandOptions = {},
+    todoMoveAuthManager?: AuthManager
+  ) {
     this.authManager = authManager;
     this.options = options;
+    this.todoMoveAuthManager = todoMoveAuthManager;
     this.graphClient = null; // Initialized in start() after secrets are loaded
     this.server = null;
     this.secrets = null;
@@ -333,6 +339,7 @@ class MicrosoftGraphServer {
       enabledTools: this.options.enabledTools,
       orgMode: this.options.orgMode,
       authManager: this.authManager,
+      todoMoveAuthManager: this.todoMoveAuthManager,
       multiAccount: this.multiAccount,
       accountNames: this.accountNames,
       allowedScopes: this.options.allowedScopes,
