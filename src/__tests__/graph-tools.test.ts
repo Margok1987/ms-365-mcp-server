@@ -4053,18 +4053,23 @@ describe('graph-tools', () => {
       });
       const authManager = { getTokenForAccount: vi.fn().mockResolvedValue(graphToken) };
       const todoMoveAuthManager = { getTokenForAccount: vi.fn().mockResolvedValue(exchangeToken) };
-      const fetchMock = vi.fn(async (url: unknown, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => {
-        expect(String(url)).toContain('/taskfolders/destination/tasks/old-task');
-        expect(init?.method).toBe('PATCH');
-        expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
-        expect((init?.headers as Record<string, string>)['x-anchormailbox']).toBe(
-          `OID:${oid}@${tid}`
-        );
-        return new Response(
-          JSON.stringify({ Id: 'new-task', ParentFolderId: 'destination' }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      });
+      const fetchMock = vi.fn(
+        async (
+          url: unknown,
+          init?: { method?: string; body?: unknown; headers?: Record<string, string> }
+        ) => {
+          expect(String(url)).toContain('/taskfolders/destination/tasks/old-task');
+          expect(init?.method).toBe('PATCH');
+          expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
+          expect((init?.headers as Record<string, string>)['x-anchormailbox']).toBe(
+            `OID:${oid}@${tid}`
+          );
+          return new Response(JSON.stringify({ Id: 'new-task', ParentFolderId: 'destination' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      );
       vi.stubGlobal('fetch', fetchMock);
 
       const server = createMockServer();
@@ -4134,9 +4139,7 @@ describe('graph-tools', () => {
         destinationListId: 'destination',
       });
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text).code).toBe(
-        'TODO_MOVE_PRINCIPAL_OR_SCOPE_MISMATCH'
-      );
+      expect(JSON.parse(result.content[0].text).code).toBe('TODO_MOVE_PRINCIPAL_OR_SCOPE_MISMATCH');
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
