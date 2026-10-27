@@ -8,6 +8,7 @@ const LOCAL_ACCOUNT_COMMANDS = [
   'selectAccount',
   'removeAccount',
   'verifyLogin',
+  'todoMoveLogin',
 ] as const;
 
 export function getExpectedAccountInertWarning(
