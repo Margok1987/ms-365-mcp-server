@@ -4053,7 +4053,7 @@ describe('graph-tools', () => {
       });
       const authManager = { getTokenForAccount: vi.fn().mockResolvedValue(graphToken) };
       const todoMoveAuthManager = { getTokenForAccount: vi.fn().mockResolvedValue(exchangeToken) };
-      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const fetchMock = vi.fn(async (url: unknown, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) => {
         expect(String(url)).toContain('/taskfolders/destination/tasks/old-task');
         expect(init?.method).toBe('PATCH');
         expect(init?.body).toBe(JSON.stringify({ ParentFolderId: 'destination' }));
