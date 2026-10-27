@@ -117,6 +117,14 @@ program
     'Enable On-Behalf-Of token exchange in HTTP mode. Exchanges the incoming bearer token for a Graph API token using the OBO flow. Requires MS365_MCP_CLIENT_SECRET.'
   )
   .option(
+    '--enable-todo-move',
+    'Enable the opt-in Microsoft To Do cross-list move utility. Uses a separately cached delegated Exchange Online Tasks.ReadWrite token; no copy/delete fallback.'
+  )
+  .option(
+    '--todo-move-login',
+    'Perform one device-code login for the delegated Exchange Online Tasks.ReadWrite token used by --enable-todo-move, persist it in the normal encrypted MSAL cache, then exit.'
+  )
+  .option(
     '--trust-proxy-auth',
     'In HTTP mode, skip the built-in Bearer-token check on /mcp and ignore any forwarded Authorization header. All callers share the locally cached MSAL identity (same path stdio mode uses). Use only when an upstream reverse proxy has already authenticated the caller.'
   )
@@ -186,6 +194,8 @@ export interface CommandOptions {
   dynamicRegistration?: boolean;
   authBrowser?: boolean;
   obo?: boolean;
+  enableTodoMove?: boolean;
+  todoMoveLogin?: boolean;
   trustProxyAuth?: boolean;
   httpLocalFileTools?: boolean;
   blobOutput?: boolean;
@@ -401,6 +411,13 @@ export function parseArgs(): CommandOptions {
 
   if (process.env.MS365_MCP_OBO === 'true' || process.env.MS365_MCP_OBO === '1') {
     options.obo = true;
+  }
+
+  if (
+    process.env.MS365_MCP_ENABLE_TODO_MOVE === 'true' ||
+    process.env.MS365_MCP_ENABLE_TODO_MOVE === '1'
+  ) {
+    options.enableTodoMove = true;
   }
 
   if (
