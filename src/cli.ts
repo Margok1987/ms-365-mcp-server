@@ -420,6 +420,10 @@ export function parseArgs(): CommandOptions {
     options.enableTodoMove = true;
   }
 
+  if (options.enableTodoMove) {
+    process.env.MS365_MCP_ENABLE_TODO_MOVE = 'true';
+  }
+
   if (
     process.env.MS365_MCP_TRUST_PROXY_AUTH === 'true' ||
     process.env.MS365_MCP_TRUST_PROXY_AUTH === '1'
