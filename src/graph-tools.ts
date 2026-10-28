@@ -75,6 +75,7 @@ import {
 import { describeToolSchema, describeUtilityToolSchema } from './lib/tool-schema.js';
 import {
   prepareReplyContent,
+  providerHtmlEquivalent,
   requireNativeFolderId,
   validateContentBundle,
   verifyInlineResourceReadback,
@@ -2075,7 +2076,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           prepared.changed &&
           (!finalBody ||
             String(finalBody.contentType).toLowerCase() !== 'html' ||
-            finalBody.content !== prepared.html)
+            typeof finalBody.content !== 'string' ||
+            !providerHtmlEquivalent(prepared.html, finalBody.content))
         ) {
           throw new VerifiedMailRuntimeError('FINAL_BODY_DRIFT', 'final-readback', true, draftId);
         }
