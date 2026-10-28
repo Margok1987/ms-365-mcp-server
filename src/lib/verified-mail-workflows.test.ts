@@ -66,6 +66,23 @@ describe('verified mail workflow primitives', () => {
     expect(MAX_VERIFIED_INLINE_RESOURCES).toBe(2);
   });
 
+  it('preserves an opaque bundle fragment without adding a semantic wrapper', () => {
+    const result = prepareReplyContent(
+      '<html><body><p>history</p></body></html>',
+      '',
+      {
+        bundleId: 'opaque',
+        htmlFragment: '<p data-owner="caller">exact fragment</p>',
+        inlineResources: [],
+      },
+      [],
+      'attempt'
+    );
+
+    expect(result.html).toContain('<p data-owner="caller">exact fragment</p><p>history</p>');
+    expect(result.html).not.toContain('data-mcp-content-bundle');
+  });
+
   it('fails before execution when a bundle resource hash is wrong', () => {
     expect(() =>
       validateContentBundle({
