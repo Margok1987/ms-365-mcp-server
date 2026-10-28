@@ -1,0 +1,5 @@
+services:
+  ms365-onedrive-www:
+    image: ms365-softeria-fork:b9d45f-verified-mail
+    environment:
+      MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS: "true"
