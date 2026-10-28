@@ -1409,11 +1409,22 @@ async function verifiedMailJson(
   possibleWrite = false,
   resourceId?: string
 ): Promise<Record<string, unknown>> {
-  const response = await graphClient.graphRequest(endpoint, {
-    ...options,
-    accessToken,
-    forceJsonOutput: true,
-  });
+  let response: CallToolResult;
+  try {
+    response = await graphClient.graphRequest(endpoint, {
+      ...options,
+      accessToken,
+      forceJsonOutput: true,
+    });
+  } catch (error) {
+    throw new VerifiedMailRuntimeError(
+      possibleWrite ? 'MUTATION_OUTCOME_UNKNOWN' : 'GRAPH_CALL_FAILED',
+      stage,
+      possibleWrite,
+      resourceId,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
   const first = response.content?.[0];
   const text = first && first.type === 'text' ? first.text : undefined;
   if (response.isError) {
