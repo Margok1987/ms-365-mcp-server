@@ -92,7 +92,7 @@ function escapeHtml(value: string): string {
 
 export function extractCidRefs(html: string): Set<string> {
   const refs = new Set<string>();
-  for (const match of html.matchAll(/\bcid:([^\s"'<>\)]+)/gi)) refs.add(match[1]);
+  for (const match of html.matchAll(/\bcid:([^\s"'<>)]+)/gi)) refs.add(match[1]);
   return refs;
 }
 
@@ -239,7 +239,7 @@ export function prepareReplyContent(
   for (const [original, effective] of replacements) {
     if (original === effective) continue;
     fragment = fragment.replace(
-      new RegExp(`cid:${escapeRegex(original)}(?=[\\s"'<>\)])`, 'gi'),
+      new RegExp(`cid:${escapeRegex(original)}(?=[\\s"'<>)])`, 'gi'),
       `cid:${effective}`
     );
   }
