@@ -906,12 +906,12 @@ interface DeniedToolPolicy {
   pathPattern?: string;
 }
 
-function getUtilityMissingScopes(
-  utility: UtilityTool,
-  allowedScopesValue?: string
-): string[] {
+function getUtilityMissingScopes(utility: UtilityTool, allowedScopesValue?: string): string[] {
   if (!utility.scopeGroups) return [];
-  return getMissingAllowedScopesForGroups(utility.scopeGroups, parseAllowedScopes(allowedScopesValue));
+  return getMissingAllowedScopesForGroups(
+    utility.scopeGroups,
+    parseAllowedScopes(allowedScopesValue)
+  );
 }
 
 function formatDisabledToolsForLog(disabledTools: DisabledToolScope[]): string {
@@ -1299,7 +1299,6 @@ async function mintDownloadUrl(
   };
 }
 
-
 class VerifiedMailRuntimeError extends Error {
   readonly code: string;
   readonly stage: string;
@@ -1427,12 +1426,7 @@ async function verifiedMailJson(
     );
   }
   if (typeof text !== 'string') {
-    throw new VerifiedMailRuntimeError(
-      'GRAPH_RESPONSE_MISSING',
-      stage,
-      possibleWrite,
-      resourceId
-    );
+    throw new VerifiedMailRuntimeError('GRAPH_RESPONSE_MISSING', stage, possibleWrite, resourceId);
   }
   try {
     const parsed = JSON.parse(text);
@@ -1521,12 +1515,7 @@ async function verifiedMailHtmlRead(
     );
   }
   if (typeof sub.body !== 'object' || sub.body === null || Array.isArray(sub.body)) {
-    throw new VerifiedMailRuntimeError(
-      'HTML_READ_INVALID',
-      stage,
-      possibleWrite,
-      messageId
-    );
+    throw new VerifiedMailRuntimeError('HTML_READ_INVALID', stage, possibleWrite, messageId);
   }
   return sub.body as Record<string, unknown>;
 }
@@ -1673,8 +1662,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         }
 
         const seedPath =
-          mailMessagePath(messageId) +
-          (replyMode === 'reply' ? '/createReply' : '/createReplyAll');
+          mailMessagePath(messageId) + (replyMode === 'reply' ? '/createReply' : '/createReplyAll');
         const created = await verifiedMailJson(
           graphClient,
           accessToken,
@@ -1692,13 +1680,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           messageId
         );
         wrote = true;
-        draftId = verifiedMailString(
-          created.id,
-          'SEED_ID_MISSING',
-          'seed-create',
-          true,
-          messageId
-        );
+        draftId = verifiedMailString(created.id, 'SEED_ID_MISSING', 'seed-create', true, messageId);
 
         const seed = await verifiedMailHtmlRead(
           graphClient,
@@ -1713,12 +1695,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           seed.conversationId !== source.conversationId ||
           typeof seed.internetMessageId !== 'string'
         ) {
-          throw new VerifiedMailRuntimeError(
-            'SEED_IDENTITY_DRIFT',
-            'seed-readback',
-            true,
-            draftId
-          );
+          throw new VerifiedMailRuntimeError('SEED_IDENTITY_DRIFT', 'seed-readback', true, draftId);
         }
         const body =
           typeof seed.body === 'object' && seed.body !== null
@@ -1782,13 +1759,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           );
         } catch (error) {
           if (error instanceof VerifiedMailInputError) {
-            throw new VerifiedMailRuntimeError(
-              error.code,
-              'compose',
-              true,
-              draftId,
-              error.message
-            );
+            throw new VerifiedMailRuntimeError(error.code, 'compose', true, draftId, error.message);
           }
           throw error;
         }
@@ -1910,20 +1881,10 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             String(finalBody.contentType).toLowerCase() !== 'html' ||
             finalBody.content !== prepared.html)
         ) {
-          throw new VerifiedMailRuntimeError(
-            'FINAL_BODY_DRIFT',
-            'final-readback',
-            true,
-            draftId
-          );
+          throw new VerifiedMailRuntimeError('FINAL_BODY_DRIFT', 'final-readback', true, draftId);
         }
 
-        const mime = await verifiedMailMimeRead(
-          graphClient,
-          accessToken,
-          draftId,
-          true
-        );
+        const mime = await verifiedMailMimeRead(graphClient, accessToken, draftId, true);
         const sourceInternetMessageId =
           typeof source.internetMessageId === 'string' ? source.internetMessageId : undefined;
         if (
@@ -1931,16 +1892,10 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           !/^References:/im.test(mime) ||
           (sourceInternetMessageId && !mime.includes(sourceInternetMessageId)) ||
           prepared.resources.some(
-            (resource) =>
-              !mime.includes('Content-ID: <' + resource.effectiveContentId + '>')
+            (resource) => !mime.includes('Content-ID: <' + resource.effectiveContentId + '>')
           )
         ) {
-          throw new VerifiedMailRuntimeError(
-            'FINAL_MIME_DRIFT',
-            'mime-readback',
-            true,
-            draftId
-          );
+          throw new VerifiedMailRuntimeError('FINAL_MIME_DRIFT', 'mime-readback', true, draftId);
         }
 
         return {
@@ -1969,13 +1924,7 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
         if (error instanceof VerifiedMailInputError) {
           return verifiedMailError(
             wrote
-              ? new VerifiedMailRuntimeError(
-                  error.code,
-                  'compose',
-                  true,
-                  draftId,
-                  error.message
-                )
+              ? new VerifiedMailRuntimeError(error.code, 'compose', true, draftId, error.message)
               : error
           );
         }
