@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { parse } from 'parse5';
 
 export const MAX_VERIFIED_INLINE_RESOURCES = 2;
 export const MAX_VERIFIED_INLINE_RESOURCE_BYTES = 64 * 1024;
@@ -88,6 +89,180 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+type ProviderHtmlNode = {
+  nodeName?: string;
+  tagName?: string;
+  value?: string;
+  data?: string;
+  attrs?: Array<{ name: string; value: string }>;
+  childNodes?: ProviderHtmlNode[];
+};
+
+const PROVIDER_BLOCKISH_TAGS = new Set([
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'br',
+  'dd',
+  'div',
+  'dl',
+  'dt',
+  'fieldset',
+  'figcaption',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'hr',
+  'li',
+  'main',
+  'nav',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+]);
+
+const PROVIDER_VOID_TAGS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+
+function providerNodeTag(node: ProviderHtmlNode | undefined): string | undefined {
+  return node?.tagName?.toLowerCase();
+}
+
+function providerCanonicalAttrs(
+  tag: string,
+  attrs: Array<{ name: string; value: string }>
+): Array<[string, string]> {
+  const lowered = attrs.map((attr) => ({
+    name: attr.name.toLowerCase(),
+    value: attr.value.replace(/\r\n?/g, '\n'),
+  }));
+  const httpEquiv = lowered.find((attr) => attr.name === 'http-equiv')?.value.toLowerCase();
+  const isContentTypeMeta = tag === 'meta' && httpEquiv === 'content-type';
+
+  return lowered
+    .filter((attr) => {
+      if (tag !== 'img' || attr.name !== 'data-outlook-trace') return true;
+      return attr.value !== 'F:1' && attr.value !== 'T:1';
+    })
+    .map((attr) => {
+      let value = attr.value;
+      if (isContentTypeMeta && attr.name === 'content') {
+        value = value.replace(
+          /charset\s*=\s*(?:utf-8|iso-8859-1)/i,
+          'charset=provider-normalized'
+        );
+      }
+      return [attr.name, value] as [string, string];
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function providerCanonicalHtmlEvents(value: string): string[] {
+  if (!value) inputError('HTML_PROVIDER_DRIFT', 'HTML is required for provider comparison.');
+  const document = parse(value) as unknown as ProviderHtmlNode;
+  const events: string[] = [];
+
+  const walk = (node: ProviderHtmlNode, parentTag?: string): void => {
+    if (node.nodeName === '#text') {
+      const text = (node.value ?? '').replace(/\r\n?/g, '\n');
+      if (!text) return;
+      if (/^\s+$/.test(text)) {
+        if (!parentTag || parentTag === 'html' || parentTag === 'head' || parentTag === 'body') {
+          return;
+        }
+        events.push('text: ');
+        return;
+      }
+      events.push('text:' + text);
+      return;
+    }
+
+    if (node.nodeName === '#comment') {
+      events.push('comment:' + (node.data ?? '').replace(/\r\n?/g, '\n'));
+      return;
+    }
+
+    const tag = providerNodeTag(node);
+    if (!tag) {
+      for (const child of node.childNodes ?? []) walk(child, parentTag);
+      return;
+    }
+
+    events.push('start:' + tag + ':' + JSON.stringify(providerCanonicalAttrs(tag, node.attrs ?? [])));
+    const children = node.childNodes ?? [];
+    for (let index = 0; index < children.length; index++) {
+      const child = children[index];
+      if (child.nodeName === '#text') {
+        const text = (child.value ?? '').replace(/\r\n?/g, '\n');
+        if (/^\s+$/.test(text)) {
+          const previous = [...children.slice(0, index)]
+            .reverse()
+            .find((candidate) => candidate.nodeName !== '#text' || !/^\s*$/.test(candidate.value ?? ''));
+          const next = children
+            .slice(index + 1)
+            .find((candidate) => candidate.nodeName !== '#text' || !/^\s*$/.test(candidate.value ?? ''));
+          const previousTag = providerNodeTag(previous);
+          const nextTag = providerNodeTag(next);
+          if (
+            tag === 'html' ||
+            tag === 'head' ||
+            tag === 'body' ||
+            (previousTag !== undefined && PROVIDER_BLOCKISH_TAGS.has(previousTag)) ||
+            (nextTag !== undefined && PROVIDER_BLOCKISH_TAGS.has(nextTag))
+          ) {
+            continue;
+          }
+        }
+      }
+      walk(child, tag);
+    }
+    if (!PROVIDER_VOID_TAGS.has(tag)) events.push('end:' + tag);
+  };
+
+  walk(document);
+  return events;
+}
+
+export function providerHtmlEquivalent(expected: string, actual: string): boolean {
+  try {
+    return JSON.stringify(providerCanonicalHtmlEvents(expected)) ===
+      JSON.stringify(providerCanonicalHtmlEvents(actual));
+  } catch {
+    return false;
+  }
 }
 
 export function extractCidRefs(html: string): Set<string> {
