@@ -661,6 +661,30 @@ npx @softeria/ms-365-mcp-server --discovery
 
 Keeps the initial context small and cuts token usage, especially useful for long sessions or cost-sensitive setups (e.g. Open WebUI running against a paid API).
 
+
+### Verified Mail Workflows (opt-in candidate)
+
+Set `MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS=true` to expose two semantic Mail
+utilities. They are disabled by default and require `Mail.ReadWrite`.
+
+- `compose-mail-reply-draft` creates one native Reply or Reply-All draft, preserves
+  the native thread/audience, accepts caller-authored text and an **optional opaque
+  content bundle**, and verifies the resulting draft/MIME. The server does not require
+  a content bundle and does not decide whether a footer, signature, brand asset or any
+  other business content is needed. When a bundle is supplied, its HTML/CID resources
+  and full inline bytes are validated and read back. The candidate currently bounds one
+  bundle to at most two inline resources of at most 64 KiB each. It never sends mail.
+- `file-mail-message` moves one message only to an **explicit native mail-folder ID**
+  supplied by the caller and verifies the final parent folder. This utility does not
+  choose a filing destination and deliberately rejects provider well-known aliases such
+  as `archive` or `inbox`; callers that intentionally want provider Archive can still
+  use the separate raw Graph move primitive where their policy permits it.
+
+These utilities implement technical execution guarantees only. Consumer/business policy
+continues to own whether a bundle is used, which content it contains, whether filing is
+due, and which business/project folder is the destination. Activation does not add Send
+authority or make either tool a business workflow engine.
+
 ## CLI Options
 
 The following options can be used when running ms-365-mcp-server directly from the command line:
@@ -723,6 +747,7 @@ When running as an MCP server, the following options can be used:
 
 Environment variables:
 
+- `MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS=true|1`: Expose the opt-in `compose-mail-reply-draft` and `file-mail-message` semantic Mail utilities. Disabled by default. These tools require `Mail.ReadWrite` and never send mail.
 - `READ_ONLY=true|1`: Alternative to --read-only flag
 - `ENABLED_TOOLS`: Filter tools using a regex pattern (alternative to --enabled-tools flag)
 - `MS365_MCP_ORG_MODE=true|1`: Enable organization/work mode (alternative to --org-mode flag)
