@@ -125,7 +125,7 @@ export function validateContentBundle(
     }
     const name = nonEmpty(resource.name, 'inlineResources.name');
     const contentType = nonEmpty(resource.contentType, 'inlineResources.contentType');
-    if (!/^[^\s/]+\/[^\s/]+/.test(contentType)) {
+    if (!/^[^\s/]+\/[^\s/]+$/.test(contentType)) {
       inputError('INVALID_CONTENT_BUNDLE', 'contentType must be a MIME type.');
     }
     const expectedSha = nonEmpty(resource.sha256, 'inlineResources.sha256').toLowerCase();
@@ -239,7 +239,7 @@ export function prepareReplyContent(
   for (const [original, effective] of replacements) {
     if (original === effective) continue;
     fragment = fragment.replace(
-      new RegExp(`cid:${escapeRegex(original)}(?=[\\s"'<>\\)])`, 'gi'),
+      new RegExp(`cid:${escapeRegex(original)}(?=[\\s"'<>\)])`, 'gi'),
       `cid:${effective}`
     );
   }
