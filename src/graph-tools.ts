@@ -55,6 +55,14 @@ import {
 import { parseTeamsUrl } from './lib/teams-url-parser.js';
 import { describeToolSchema, describeUtilityToolSchema } from './lib/tool-schema.js';
 import {
+  prepareReplyContent,
+  requireNativeFolderId,
+  validateContentBundle,
+  verifyInlineResourceReadback,
+  VerifiedMailInputError,
+  type VerifiedContentBundle,
+} from './lib/verified-mail-workflows.js';
+import {
   restrictUserFieldQuery,
   restrictUserFieldUrl,
   shouldStripUserFieldExpand,
@@ -879,6 +887,9 @@ interface UtilityTool {
   stdioOnly?: boolean;
   // Registered only while this returns true, for a tool that needs operator opt-in.
   enabled?: () => boolean;
+  // Alternative scope groups accepted for this semantic utility. Each inner array is AND,
+  // outer entries are OR, matching endpoint scope semantics.
+  scopeGroups?: string[][];
 }
 
 interface DisabledToolScope {
@@ -893,6 +904,14 @@ interface DeniedToolPolicy {
   reason: ToolDeniedReason;
   missingScopes?: string[];
   pathPattern?: string;
+}
+
+function getUtilityMissingScopes(
+  utility: UtilityTool,
+  allowedScopesValue?: string
+): string[] {
+  if (!utility.scopeGroups) return [];
+  return getMissingAllowedScopesForGroups(utility.scopeGroups, parseAllowedScopes(allowedScopesValue));
 }
 
 function formatDisabledToolsForLog(disabledTools: DisabledToolScope[]): string {
@@ -966,6 +985,15 @@ function collectDeniedToolPolicies(options: {
     if (options.readOnly && !utility.readOnlyHint) continue;
     if (options.httpMode && utility.stdioOnly) continue;
     if (utility.enabled && !utility.enabled()) continue;
+    const missingScopes = getUtilityMissingScopes(utility, options.allowedScopesValue);
+    if (missingScopes.length > 0) {
+      deniedTools.set(utility.name, {
+        toolName: utility.name,
+        reason: 'allowed_scopes',
+        missingScopes,
+      });
+      continue;
+    }
     if (options.enabledToolsRegex && !options.enabledToolsRegex.test(utility.name)) {
       deniedTools.set(utility.name, {
         toolName: utility.name,
@@ -1271,7 +1299,875 @@ async function mintDownloadUrl(
   };
 }
 
+
+class VerifiedMailRuntimeError extends Error {
+  readonly code: string;
+  readonly stage: string;
+  readonly possibleWrite: boolean;
+  readonly resourceId?: string;
+
+  constructor(
+    code: string,
+    stage: string,
+    possibleWrite: boolean,
+    resourceId?: string,
+    message?: string
+  ) {
+    super(message ?? code);
+    this.name = 'VerifiedMailRuntimeError';
+    this.code = code;
+    this.stage = stage;
+    this.possibleWrite = possibleWrite;
+    this.resourceId = resourceId;
+  }
+}
+
+function verifiedMailEnabled(): boolean {
+  return /^(1|true)$/i.test(process.env.MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS ?? '');
+}
+
+function verifiedMailError(error: unknown): CallToolResult {
+  if (error instanceof VerifiedMailRuntimeError) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: error.code,
+            stage: error.stage,
+            possibleWrite: error.possibleWrite,
+            resourceId: error.resourceId,
+            message: error.message,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (error instanceof VerifiedMailInputError) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: error.code,
+            stage: 'validation',
+            possibleWrite: false,
+            message: error.message,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          error: 'UNEXPECTED_MAIL_WORKFLOW_ERROR',
+          possibleWrite: false,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+async function verifiedMailAccessToken(
+  params: Record<string, unknown>,
+  authManager?: AuthManager
+): Promise<string | undefined> {
+  const account = typeof params.account === 'string' ? params.account : undefined;
+  const accountModeError = await checkAccountParamInBearerMode(account, authManager);
+  if (accountModeError) {
+    throw new VerifiedMailRuntimeError(
+      'ACCOUNT_MODE_ERROR',
+      'identity',
+      false,
+      undefined,
+      accountModeError
+    );
+  }
+  if (authManager && !authManager.isOAuthModeEnabled() && !getRequestTokens()) {
+    return await authManager.getTokenForAccount(account);
+  }
+  return undefined;
+}
+
+async function verifiedMailJson(
+  graphClient: GraphClient,
+  accessToken: string | undefined,
+  endpoint: string,
+  stage: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    rawResponse?: boolean;
+  } = {},
+  possibleWrite = false,
+  resourceId?: string
+): Promise<Record<string, unknown>> {
+  const response = await graphClient.graphRequest(endpoint, {
+    ...options,
+    accessToken,
+    forceJsonOutput: true,
+  });
+  const first = response.content?.[0];
+  const text = first && first.type === 'text' ? first.text : undefined;
+  if (response.isError) {
+    throw new VerifiedMailRuntimeError(
+      'GRAPH_CALL_FAILED',
+      stage,
+      possibleWrite,
+      resourceId,
+      text ?? 'Microsoft Graph call failed.'
+    );
+  }
+  if (typeof text !== 'string') {
+    throw new VerifiedMailRuntimeError(
+      'GRAPH_RESPONSE_MISSING',
+      stage,
+      possibleWrite,
+      resourceId
+    );
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('Expected an object response.');
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new VerifiedMailRuntimeError(
+      'GRAPH_RESPONSE_INVALID',
+      stage,
+      possibleWrite,
+      resourceId,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
+function mailMessagePath(messageId: string): string {
+  return '/me/messages/' + encodeURIComponent(messageId);
+}
+
+async function verifiedMailHtmlRead(
+  graphClient: GraphClient,
+  accessToken: string | undefined,
+  messageId: string,
+  stage: string,
+  possibleWrite = false
+): Promise<Record<string, unknown>> {
+  const select =
+    'id,isDraft,parentFolderId,changeKey,conversationId,internetMessageId,subject,body,toRecipients,ccRecipients,bccRecipients,replyTo';
+  const batch = await verifiedMailJson(
+    graphClient,
+    accessToken,
+    '/$batch',
+    stage,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [
+          {
+            id: '1',
+            method: 'GET',
+            url: mailMessagePath(messageId) + '?$select=' + select,
+            headers: {
+              Prefer: 'IdType="ImmutableId", outlook.body-content-type="html"',
+            },
+          },
+        ],
+      }),
+    },
+    possibleWrite,
+    messageId
+  );
+  const responses = batch.responses;
+  const sub =
+    Array.isArray(responses) && responses.length === 1
+      ? (responses[0] as Record<string, unknown>)
+      : undefined;
+  if (!sub || sub.status !== 200) {
+    throw new VerifiedMailRuntimeError(
+      'HTML_READ_FAILED',
+      stage,
+      possibleWrite,
+      messageId,
+      'The exact Graph batch HTML read did not return one 200 response.'
+    );
+  }
+  const headers =
+    typeof sub.headers === 'object' && sub.headers !== null
+      ? (sub.headers as Record<string, unknown>)
+      : {};
+  const preferenceApplied = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === 'preference-applied'
+  )?.[1];
+  if (
+    typeof preferenceApplied !== 'string' ||
+    !/outlook\.body-content-type="?html"?/i.test(preferenceApplied)
+  ) {
+    throw new VerifiedMailRuntimeError(
+      'PROVIDER_HTML_PREFERENCE_NOT_APPLIED',
+      stage,
+      possibleWrite,
+      messageId
+    );
+  }
+  if (typeof sub.body !== 'object' || sub.body === null || Array.isArray(sub.body)) {
+    throw new VerifiedMailRuntimeError(
+      'HTML_READ_INVALID',
+      stage,
+      possibleWrite,
+      messageId
+    );
+  }
+  return sub.body as Record<string, unknown>;
+}
+
+async function verifiedMailMimeRead(
+  graphClient: GraphClient,
+  accessToken: string | undefined,
+  messageId: string,
+  possibleWrite: boolean
+): Promise<string> {
+  const result = await verifiedMailJson(
+    graphClient,
+    accessToken,
+    mailMessagePath(messageId) + '/$value',
+    'mime-readback',
+    {
+      headers: {
+        Accept: 'message/rfc822',
+        Prefer: 'IdType="ImmutableId"',
+      },
+      rawResponse: true,
+    },
+    possibleWrite,
+    messageId
+  );
+  if (typeof result.rawResponse !== 'string') {
+    throw new VerifiedMailRuntimeError(
+      'MIME_READBACK_INVALID',
+      'mime-readback',
+      possibleWrite,
+      messageId
+    );
+  }
+  return result.rawResponse;
+}
+
+function verifiedMailAudience(message: Record<string, unknown>, field: string): string {
+  return JSON.stringify(message[field] ?? []);
+}
+
+function verifiedMailString(
+  value: unknown,
+  code: string,
+  stage: string,
+  possibleWrite: boolean,
+  resourceId?: string
+): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new VerifiedMailRuntimeError(code, stage, possibleWrite, resourceId);
+  }
+  return value;
+}
+
 export const UTILITY_TOOLS: readonly UtilityTool[] = [
+  {
+    name: 'compose-mail-reply-draft',
+    method: 'POST',
+    path: 'tool:compose-mail-reply-draft',
+    searchKeywords:
+      'reply reply-all draft compose preserve thread history html inline content bundle cid no-send',
+    description:
+      'Create and verify one unsent native Outlook Reply or Reply-All draft. The caller chooses the reply mode, authored text and an optional opaque content bundle. This tool does not require or select any footer, identity, brand or other business content. If a bundle is supplied, its HTML, CID resources and bytes are validated and read back. The native reply thread and audience are preserved; no send occurs. Requires MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS=true.',
+    readOnlyHint: false,
+    openWorldHint: false,
+    enabled: verifiedMailEnabled,
+    scopeGroups: [['Mail.ReadWrite']],
+    buildSchema: (ctx) => {
+      const inlineResource = z.object({
+        contentId: z.string().min(1),
+        name: z.string().min(1),
+        contentType: z.string().min(3),
+        contentBytesBase64: z.string().min(4).max(100000),
+        sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+      });
+      const schema: Record<string, z.ZodTypeAny> = {
+        messageId: z.string().min(1).describe('Exact source message ID.'),
+        replyMode: z.enum(['reply', 'replyAll']).describe('Native Reply or Reply-All.'),
+        authoredText: z
+          .string()
+          .max(100000)
+          .optional()
+          .describe('Caller-selected authored plain text to prepend. Optional.'),
+        contentBundle: z
+          .object({
+            bundleId: z.string().min(1),
+            htmlFragment: z.string().max(250000),
+            inlineResources: z.array(inlineResource).max(2),
+          })
+          .optional()
+          .describe(
+            'Optional caller-selected HTML bundle with zero to two inline resources. The server assigns no business meaning to the bundle.'
+          ),
+      };
+      if (ctx.multiAccount) {
+        schema.account = z
+          .string()
+          .optional()
+          .describe('Account to use when multiple Microsoft accounts are configured.');
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      let draftId: string | undefined;
+      let wrote = false;
+      try {
+        const messageId = verifiedMailString(
+          params.messageId,
+          'INVALID_INPUT',
+          'validation',
+          false
+        );
+        const replyMode = params.replyMode;
+        if (replyMode !== 'reply' && replyMode !== 'replyAll') {
+          throw new VerifiedMailRuntimeError('INVALID_REPLY_MODE', 'validation', false);
+        }
+        const authoredText = typeof params.authoredText === 'string' ? params.authoredText : '';
+        if (authoredText.length > 100000) {
+          throw new VerifiedMailRuntimeError('AUTHORED_TEXT_TOO_LARGE', 'validation', false);
+        }
+        const bundle = validateContentBundle(
+          params.contentBundle as VerifiedContentBundle | undefined
+        );
+        const accessToken = await verifiedMailAccessToken(params, authManager);
+
+        const source = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          mailMessagePath(messageId) +
+            '?$select=id,conversationId,internetMessageId,parentFolderId',
+          'source-read',
+          { headers: { Prefer: 'IdType="ImmutableId"' } }
+        );
+        if (
+          source.id !== messageId ||
+          typeof source.conversationId !== 'string' ||
+          source.conversationId.length === 0
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'SOURCE_IDENTITY_MISMATCH',
+            'source-read',
+            false,
+            messageId
+          );
+        }
+
+        const seedPath =
+          mailMessagePath(messageId) +
+          (replyMode === 'reply' ? '/createReply' : '/createReplyAll');
+        const created = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          seedPath,
+          'seed-create',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Prefer: 'IdType="ImmutableId"',
+            },
+            body: '{}',
+          },
+          true,
+          messageId
+        );
+        wrote = true;
+        draftId = verifiedMailString(
+          created.id,
+          'SEED_ID_MISSING',
+          'seed-create',
+          true,
+          messageId
+        );
+
+        const seed = await verifiedMailHtmlRead(
+          graphClient,
+          accessToken,
+          draftId,
+          'seed-readback',
+          true
+        );
+        if (
+          seed.id !== draftId ||
+          seed.isDraft !== true ||
+          seed.conversationId !== source.conversationId ||
+          typeof seed.internetMessageId !== 'string'
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'SEED_IDENTITY_DRIFT',
+            'seed-readback',
+            true,
+            draftId
+          );
+        }
+        const body =
+          typeof seed.body === 'object' && seed.body !== null
+            ? (seed.body as Record<string, unknown>)
+            : undefined;
+        if (
+          !body ||
+          typeof body.content !== 'string' ||
+          String(body.contentType).toLowerCase() !== 'html'
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'PROVIDER_HTML_REQUIRED',
+            'seed-readback',
+            true,
+            draftId
+          );
+        }
+
+        const attachmentPage = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          mailMessagePath(draftId) + '/attachments?$select=id,name,contentType,size,isInline',
+          'attachment-prestate',
+          { headers: { Prefer: 'IdType="ImmutableId"' } },
+          true,
+          draftId
+        );
+        const attachmentIds = Array.isArray(attachmentPage.value)
+          ? attachmentPage.value
+              .map((item) =>
+                typeof item === 'object' && item !== null
+                  ? (item as Record<string, unknown>).id
+                  : undefined
+              )
+              .filter((id): id is string => typeof id === 'string')
+          : [];
+        const reservedContentIds: string[] = [];
+        for (const attachmentId of attachmentIds) {
+          const attachment = await verifiedMailJson(
+            graphClient,
+            accessToken,
+            mailMessagePath(draftId) + '/attachments/' + encodeURIComponent(attachmentId),
+            'attachment-prestate',
+            { headers: { Prefer: 'IdType="ImmutableId"' } },
+            true,
+            draftId
+          );
+          if (typeof attachment.contentId === 'string' && attachment.contentId) {
+            reservedContentIds.push(attachment.contentId);
+          }
+        }
+
+        let prepared;
+        try {
+          prepared = prepareReplyContent(
+            body.content,
+            authoredText,
+            bundle,
+            reservedContentIds,
+            randomUUID()
+          );
+        } catch (error) {
+          if (error instanceof VerifiedMailInputError) {
+            throw new VerifiedMailRuntimeError(
+              error.code,
+              'compose',
+              true,
+              draftId,
+              error.message
+            );
+          }
+          throw error;
+        }
+
+        const addedAttachmentIds: string[] = [];
+        for (const resource of prepared.resources) {
+          const added = await verifiedMailJson(
+            graphClient,
+            accessToken,
+            mailMessagePath(draftId) + '/attachments',
+            'attachment-write',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Prefer: 'IdType="ImmutableId"',
+              },
+              body: JSON.stringify({
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                name: resource.name,
+                contentType: resource.contentType,
+                isInline: true,
+                contentId: resource.effectiveContentId,
+                contentBytes: resource.contentBytesBase64,
+              }),
+            },
+            true,
+            draftId
+          );
+          wrote = true;
+          const attachmentId = verifiedMailString(
+            added.id,
+            'ATTACHMENT_ID_MISSING',
+            'attachment-write',
+            true,
+            draftId
+          );
+          const actual = await verifiedMailJson(
+            graphClient,
+            accessToken,
+            mailMessagePath(draftId) + '/attachments/' + encodeURIComponent(attachmentId),
+            'attachment-readback',
+            { headers: { Prefer: 'IdType="ImmutableId"' } },
+            true,
+            attachmentId
+          );
+          try {
+            verifyInlineResourceReadback(actual, resource);
+          } catch (error) {
+            if (error instanceof VerifiedMailInputError) {
+              throw new VerifiedMailRuntimeError(
+                error.code,
+                'attachment-readback',
+                true,
+                attachmentId,
+                error.message
+              );
+            }
+            throw error;
+          }
+          addedAttachmentIds.push(attachmentId);
+        }
+
+        if (prepared.changed) {
+          await verifiedMailJson(
+            graphClient,
+            accessToken,
+            mailMessagePath(draftId),
+            'body-write',
+            {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                Prefer: 'IdType="ImmutableId"',
+              },
+              body: JSON.stringify({
+                body: { contentType: 'html', content: prepared.html },
+              }),
+            },
+            true,
+            draftId
+          );
+          wrote = true;
+        }
+
+        const final = await verifiedMailHtmlRead(
+          graphClient,
+          accessToken,
+          draftId,
+          'final-readback',
+          true
+        );
+        if (
+          final.id !== draftId ||
+          final.isDraft !== true ||
+          final.conversationId !== seed.conversationId ||
+          final.internetMessageId !== seed.internetMessageId ||
+          verifiedMailAudience(final, 'toRecipients') !==
+            verifiedMailAudience(seed, 'toRecipients') ||
+          verifiedMailAudience(final, 'ccRecipients') !==
+            verifiedMailAudience(seed, 'ccRecipients') ||
+          verifiedMailAudience(final, 'bccRecipients') !==
+            verifiedMailAudience(seed, 'bccRecipients')
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'FINAL_DRAFT_IDENTITY_DRIFT',
+            'final-readback',
+            true,
+            draftId
+          );
+        }
+        const finalBody =
+          typeof final.body === 'object' && final.body !== null
+            ? (final.body as Record<string, unknown>)
+            : undefined;
+        if (
+          prepared.changed &&
+          (!finalBody ||
+            String(finalBody.contentType).toLowerCase() !== 'html' ||
+            finalBody.content !== prepared.html)
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'FINAL_BODY_DRIFT',
+            'final-readback',
+            true,
+            draftId
+          );
+        }
+
+        const mime = await verifiedMailMimeRead(
+          graphClient,
+          accessToken,
+          draftId,
+          true
+        );
+        const sourceInternetMessageId =
+          typeof source.internetMessageId === 'string' ? source.internetMessageId : undefined;
+        if (
+          !/^In-Reply-To:/im.test(mime) ||
+          !/^References:/im.test(mime) ||
+          (sourceInternetMessageId && !mime.includes(sourceInternetMessageId)) ||
+          prepared.resources.some(
+            (resource) =>
+              !mime.includes('Content-ID: <' + resource.effectiveContentId + '>')
+          )
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'FINAL_MIME_DRIFT',
+            'mime-readback',
+            true,
+            draftId
+          );
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'VERIFIED',
+                sourceMessageId: messageId,
+                draftId,
+                replyMode,
+                isDraft: true,
+                authoredContentApplied: authoredText.length > 0,
+                contentBundleApplied: bundle !== undefined,
+                inlineResourceCount: prepared.resources.length,
+                inlineAttachmentIds: addedAttachmentIds,
+                threadVerified: true,
+                audienceVerified: true,
+                mimeVerified: true,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        if (error instanceof VerifiedMailRuntimeError) return verifiedMailError(error);
+        if (error instanceof VerifiedMailInputError) {
+          return verifiedMailError(
+            wrote
+              ? new VerifiedMailRuntimeError(
+                  error.code,
+                  'compose',
+                  true,
+                  draftId,
+                  error.message
+                )
+              : error
+          );
+        }
+        return verifiedMailError(
+          new VerifiedMailRuntimeError(
+            'UNEXPECTED_MAIL_WORKFLOW_ERROR',
+            'execution',
+            wrote,
+            draftId,
+            error instanceof Error ? error.message : String(error)
+          )
+        );
+      }
+    },
+  },
+  {
+    name: 'file-mail-message',
+    method: 'POST',
+    path: 'tool:file-mail-message',
+    searchKeywords:
+      'file move message exact destination folder id verified filing archive project folder',
+    description:
+      'Move one Outlook message to one explicit native mail-folder ID and verify the destination. The tool never chooses a filing destination and does not interpret provider well-known folder aliases such as archive or inbox as a business destination. If the message is already in the exact destination, no write occurs. Requires MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS=true.',
+    readOnlyHint: false,
+    openWorldHint: false,
+    enabled: verifiedMailEnabled,
+    scopeGroups: [['Mail.ReadWrite']],
+    buildSchema: (ctx) => {
+      const schema: Record<string, z.ZodTypeAny> = {
+        messageId: z.string().min(1).describe('Exact source message ID.'),
+        destinationFolderId: z
+          .string()
+          .min(1)
+          .describe(
+            'Exact native destination mail-folder ID. Provider well-known aliases are rejected.'
+          ),
+      };
+      if (ctx.multiAccount) {
+        schema.account = z
+          .string()
+          .optional()
+          .describe('Account to use when multiple Microsoft accounts are configured.');
+      }
+      return schema;
+    },
+    execute: async (params, { graphClient, authManager }) => {
+      let wrote = false;
+      let movedMessageId: string | undefined;
+      try {
+        const messageId = verifiedMailString(
+          params.messageId,
+          'INVALID_INPUT',
+          'validation',
+          false
+        );
+        const destinationFolderId = requireNativeFolderId(params.destinationFolderId);
+        const accessToken = await verifiedMailAccessToken(params, authManager);
+
+        const source = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          mailMessagePath(messageId) +
+            '?$select=id,parentFolderId,conversationId,internetMessageId,changeKey',
+          'source-read',
+          { headers: { Prefer: 'IdType="ImmutableId"' } }
+        );
+        if (source.id !== messageId || typeof source.parentFolderId !== 'string') {
+          throw new VerifiedMailRuntimeError(
+            'SOURCE_IDENTITY_MISMATCH',
+            'source-read',
+            false,
+            messageId
+          );
+        }
+
+        const destination = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          '/me/mailFolders/' +
+            encodeURIComponent(destinationFolderId) +
+            '?$select=id,displayName,parentFolderId',
+          'destination-read'
+        );
+        if (destination.id !== destinationFolderId) {
+          throw new VerifiedMailRuntimeError(
+            'DESTINATION_IDENTITY_MISMATCH',
+            'destination-read',
+            false,
+            destinationFolderId
+          );
+        }
+
+        if (source.parentFolderId === destinationFolderId) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  status: 'ALREADY_FILED',
+                  sourceMessageId: messageId,
+                  movedMessageId: messageId,
+                  destinationFolderId,
+                  destinationDisplayName: destination.displayName,
+                  verified: true,
+                  writePerformed: false,
+                }),
+              },
+            ],
+          };
+        }
+
+        const moved = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          mailMessagePath(messageId) + '/move',
+          'move',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Prefer: 'IdType="ImmutableId"',
+            },
+            body: JSON.stringify({ destinationId: destinationFolderId }),
+          },
+          true,
+          messageId
+        );
+        wrote = true;
+        movedMessageId = verifiedMailString(
+          moved.id,
+          'MOVED_MESSAGE_ID_MISSING',
+          'move',
+          true,
+          messageId
+        );
+
+        const final = await verifiedMailJson(
+          graphClient,
+          accessToken,
+          mailMessagePath(movedMessageId) +
+            '?$select=id,parentFolderId,conversationId,internetMessageId',
+          'move-readback',
+          { headers: { Prefer: 'IdType="ImmutableId"' } },
+          true,
+          movedMessageId
+        );
+        if (
+          final.id !== movedMessageId ||
+          final.parentFolderId !== destinationFolderId ||
+          final.conversationId !== source.conversationId ||
+          final.internetMessageId !== source.internetMessageId
+        ) {
+          throw new VerifiedMailRuntimeError(
+            'MOVE_DESTINATION_DRIFT',
+            'move-readback',
+            true,
+            movedMessageId
+          );
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'VERIFIED',
+                sourceMessageId: messageId,
+                movedMessageId,
+                previousFolderId: source.parentFolderId,
+                destinationFolderId,
+                destinationDisplayName: destination.displayName,
+                verified: true,
+                writePerformed: true,
+              }),
+            },
+          ],
+        };
+      } catch (error) {
+        if (error instanceof VerifiedMailRuntimeError) return verifiedMailError(error);
+        if (error instanceof VerifiedMailInputError) return verifiedMailError(error);
+        return verifiedMailError(
+          new VerifiedMailRuntimeError(
+            'UNEXPECTED_MAIL_WORKFLOW_ERROR',
+            wrote ? 'move-readback' : 'execution',
+            wrote,
+            movedMessageId,
+            error instanceof Error ? error.message : String(error)
+          )
+        );
+      }
+    },
+  },
   {
     name: 'get-upload-url',
     method: 'PUT',
@@ -3367,6 +4263,7 @@ export function registerGraphTools(
     if (readOnly && !utility.readOnlyHint) continue;
     if (httpMode && utility.stdioOnly) continue;
     if (utility.enabled && !utility.enabled()) continue;
+    if (getUtilityMissingScopes(utility, allowedScopesValue).length > 0) continue;
     if (enabledToolsRegex && !enabledToolsRegex.test(utility.name)) continue;
     try {
       registerUtilityToolWithMcp(server, utility, utilityCtx);
@@ -3587,6 +4484,7 @@ export function registerDiscoveryTools(
     if (readOnly && !u.readOnlyHint) return false;
     if (httpMode && u.stdioOnly) return false;
     if (u.enabled && !u.enabled()) return false;
+    if (getUtilityMissingScopes(u, allowedScopesValue).length > 0) return false;
     if (enabledToolsRegex && !enabledToolsRegex.test(u.name)) return false;
     return true;
   });
