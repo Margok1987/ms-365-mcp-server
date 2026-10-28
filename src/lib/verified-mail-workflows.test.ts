@@ -4,6 +4,7 @@ import {
   MAX_VERIFIED_INLINE_RESOURCES,
   VerifiedMailInputError,
   prepareReplyContent,
+  providerHtmlEquivalent,
   requireNativeFolderId,
   validateContentBundle,
   verifyInlineResourceReadback,
@@ -81,6 +82,40 @@ describe('verified mail workflow primitives', () => {
 
     expect(result.html).toContain('<p data-owner="caller">exact fragment</p><p>history</p>');
     expect(result.html).not.toContain('data-mcp-content-bundle');
+  });
+
+  it('accepts only bounded Exchange HTML serialization normalization', () => {
+    const expected =
+      '<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
+      '<meta name="Generator" content="Microsoft Exchange Server">' +
+      '<!-- converted from text --><style>.EmailQuote { margin-left: 1pt; }</style></head>' +
+      '<body><div data-mcp-authored-content="attempt">Hello</div>' +
+      '<div class="PlainText"><br>History</div></body></html>';
+    const actual =
+      '<html>\r\n<head>\r\n<meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type">\r\n' +
+      '<meta content="Microsoft Exchange Server" name="Generator">\r\n' +
+      '<!-- converted from text --><style>.EmailQuote { margin-left: 1pt; }</style>\r\n</head>\r\n' +
+      '<body>\r\n<div data-mcp-authored-content="attempt">Hello</div>\r\n' +
+      '<div class="PlainText"><br>History</div>\r\n</body>\r\n</html>';
+
+    expect(providerHtmlEquivalent(expected, actual)).toBe(true);
+    expect(providerHtmlEquivalent(expected, actual.replace('History', 'Changed'))).toBe(false);
+  });
+
+  it('accepts only the qualified Outlook trace transition on images', () => {
+    const expected = '<html><body><img src="cid:one"></body></html>';
+    expect(
+      providerHtmlEquivalent(
+        expected,
+        '<html><body><img data-outlook-trace="F:1" src="cid:one"></body></html>'
+      )
+    ).toBe(true);
+    expect(
+      providerHtmlEquivalent(
+        expected,
+        '<html><body><img data-outlook-trace="X:9" src="cid:one"></body></html>'
+      )
+    ).toBe(false);
   });
 
   it('fails before execution when a bundle resource hash is wrong', () => {
