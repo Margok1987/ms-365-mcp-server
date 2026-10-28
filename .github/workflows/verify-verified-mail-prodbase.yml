@@ -23,6 +23,14 @@ jobs:
         run: npm i -D patch-package
       - name: Install dependencies
         run: npm ci
+      - name: Generate pinned Prettier patch
+        run: |
+          npx prettier --write src/lib/verified-mail-workflows.ts
+          if [ "${{ matrix.node-version }}" = "22.x" ]; then
+            echo "=== PRETTIER PATCH START ==="
+            git diff -- src/lib/verified-mail-workflows.ts
+            echo "=== PRETTIER PATCH END ==="
+          fi
       - name: Generate
         run: npm run generate
       - name: Lint code
