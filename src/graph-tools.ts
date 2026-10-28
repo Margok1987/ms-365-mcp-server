@@ -2112,18 +2112,25 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
           messageId
         );
 
+        const returnedMoveId = movedMessageId;
         const final = await verifiedMailJson(
           graphClient,
           accessToken,
-          mailMessagePath(movedMessageId) +
+          mailMessagePath(returnedMoveId) +
             '?$select=id,parentFolderId,conversationId,internetMessageId',
           'move-readback',
           { headers: { Prefer: 'IdType="ImmutableId"' } },
           true,
-          movedMessageId
+          returnedMoveId
+        );
+        const verifiedMovedMessageId = verifiedMailString(
+          final.id,
+          'MOVED_MESSAGE_ID_MISSING',
+          'move-readback',
+          true,
+          returnedMoveId
         );
         if (
-          final.id !== movedMessageId ||
           final.parentFolderId !== destinationFolderId ||
           final.conversationId !== source.conversationId ||
           final.internetMessageId !== source.internetMessageId
@@ -2132,9 +2139,10 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
             'MOVE_DESTINATION_DRIFT',
             'move-readback',
             true,
-            movedMessageId
+            verifiedMovedMessageId
           );
         }
+        movedMessageId = verifiedMovedMessageId;
 
         return {
           content: [
@@ -2144,6 +2152,8 @@ export const UTILITY_TOOLS: readonly UtilityTool[] = [
                 status: 'VERIFIED',
                 sourceMessageId: messageId,
                 movedMessageId,
+                returnedMoveLocatorId:
+                  returnedMoveId === movedMessageId ? undefined : returnedMoveId,
                 previousFolderId: source.parentFolderId,
                 destinationFolderId,
                 destinationDisplayName: destination.displayName,
