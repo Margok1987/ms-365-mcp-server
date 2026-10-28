@@ -254,13 +254,12 @@ export function prepareReplyContent(
     );
   }
   if (bundle) {
-    blocks.push(
-      `<div data-mcp-content-bundle="${escapeHtml(bundle.bundleId)}">${fragment}</div>`
-    );
+    // The bundle is caller-owned content. Preserve its fragment exactly except for a
+    // deterministic CID rewrite when a current resource would collide with seed history.
+    blocks.push(fragment);
   }
 
   if (blocks.length === 0) return { html: seedHtml, changed: false, resources };
-  blocks.push(`<div data-mcp-compose-attempt="${attemptId}"></div>`);
 
   return {
     html: `${prefix}${blocks.join('\n')}${history}${suffix}`,
