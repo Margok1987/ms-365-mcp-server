@@ -661,7 +661,6 @@ npx @softeria/ms-365-mcp-server --discovery
 
 Keeps the initial context small and cuts token usage, especially useful for long sessions or cost-sensitive setups (e.g. Open WebUI running against a paid API).
 
-
 ### Verified Mail Workflows (opt-in candidate)
 
 Set `MS365_MCP_ENABLE_VERIFIED_MAIL_WORKFLOWS=true` to expose two semantic Mail
