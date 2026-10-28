@@ -99,6 +99,8 @@ const UNIVERSAL_UTILITY_TOOLS = ['download-bytes', 'download-bytes-to-file'];
 // read-mail-text reads mail, so it rides with the mail-backed presets.
 const SCOPED_UTILITY_TOOLS: Record<string, string[]> = {
   'get-download-url': ['files', 'onedrive', 'personal', 'work', 'search'],
+  'compose-mail-reply-draft': ['mail', 'outlook', 'personal', 'work'],
+  'file-mail-message': ['mail', 'outlook', 'personal', 'work'],
   'get-upload-url': ['mail', 'calendar', 'outlook', 'tasks', 'personal', 'work'],
   'upload-attachment-from-file': ['mail', 'calendar', 'outlook', 'personal', 'work'],
   'parse-teams-url': ['teams', 'teams-write', 'work'],
