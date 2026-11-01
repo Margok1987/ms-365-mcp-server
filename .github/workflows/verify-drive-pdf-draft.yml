@@ -2,28 +2,6 @@ name: Verify Microsoft 365 File Transfers
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "src/lib/drive-pdf-mail-attachment.ts"
-      - "src/lib/drive-pdf-mail-attachment.test.ts"
-      - "src/lib/mail-attachment-to-drive.ts"
-      - "src/lib/mail-attachment-to-drive.test.ts"
-      - "src/graph-tools.ts"
-      - "src/graph-client.ts"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/verify-drive-pdf-draft.yml"
-  pull_request:
-    paths:
-      - "src/lib/drive-pdf-mail-attachment.ts"
-      - "src/lib/drive-pdf-mail-attachment.test.ts"
-      - "src/lib/mail-attachment-to-drive.ts"
-      - "src/lib/mail-attachment-to-drive.test.ts"
-      - "src/graph-tools.ts"
-      - "src/graph-client.ts"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/verify-drive-pdf-draft.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
